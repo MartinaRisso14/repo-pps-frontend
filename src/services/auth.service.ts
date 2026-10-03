@@ -1,5 +1,4 @@
 import api from '../api/axiosClient';
-import axios from 'axios';
 
 export interface LoginResponse {
   access_token: string;
@@ -44,10 +43,3 @@ export const authService = {
   },
 };
 
-  export const solicitarRecuperacionService = async (email: string) => {
-  // Ajustá la ruta si en tu auth.controller tiene otro nombre
-  const response = await axios.post('http://localhost:3000/auth/solicitar-recuperacion', {
-    email,
-  });
-  return response.data;
-};

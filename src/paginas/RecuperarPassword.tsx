@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { solicitarRecuperacionService } from '../services/auth.service'; // Asegurate de que coincida con cómo exportaste la función
+import { authService } from '../services/auth.service';
 
 export const RecuperarPassword: React.FC = () => {
   const navigate = useNavigate();
@@ -16,8 +16,8 @@ export const RecuperarPassword: React.FC = () => {
     setCargando(true);
 
     try {
-      await solicitarRecuperacionService(email);
-      setMensajeExito('Te enviamos un enlace de recuperación a tu correo electrónico.');
+      await authService.solicitarRecuperacion(email);
+      setMensajeExito('Si el correo está registrado, te enviaremos un enlace de recuperación.');
     } catch (err: any) {
       setError(err.response?.data?.message || 'Ocurrió un error al procesar la solicitud.');
     } finally {
