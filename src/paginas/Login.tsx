@@ -11,6 +11,14 @@ export const Login: React.FC = () => {
   const [mostrarPassword, setMostrarPassword] = useState(false);
   const navigate = useNavigate();
 
+  // Chrome/Edge/Safari muestran un ojo nativo dentro de type="password".
+  // No se puede ocultar por CSS, así que se usa text-security (soportado en esos
+  // navegadores) y el campo queda type="text": solo se ve nuestro botón.
+  const [soportaTextSecurity] = useState<boolean>(() =>
+    typeof CSS !== 'undefined' && typeof CSS.supports === 'function' && CSS.supports('-webkit-text-security', 'disc')
+  );
+  const typePassword = mostrarPassword ? 'text' : (soportaTextSecurity ? 'text' : 'password');
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -102,12 +110,15 @@ export const Login: React.FC = () => {
                 </svg>
               </div>
               <input
-                type={mostrarPassword ? 'text' : 'password'}
+                type={typePassword}
                 placeholder="Contraseña"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                style={inputStyle}
+                style={{
+                  ...inputStyle,
+                  WebkitTextSecurity: soportaTextSecurity && !mostrarPassword ? 'disc' : 'none',
+                } as React.CSSProperties}
               />
               <button
                 type="button"
