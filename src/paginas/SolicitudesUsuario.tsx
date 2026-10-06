@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { useNavigate } from 'react-router-dom';
-import logoConcordia from '../assets/logo2.png';
+import api from '../api/axiosClient';
+import { authService } from '../services/auth.service';
+import { EncabezadoInstitucional } from '../componentes/EncabezadoInstitucional';
 
 // La estructura real devuelta por la base de datos
 interface Solicitud {
@@ -18,6 +19,91 @@ interface Solicitud {
   familiaresAfectados?: string[];
 }
 
+const formatearFecha = (fecha?: string | null) => {
+  if (!fecha) return '';
+
+  const fechaConZona = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(fecha)
+    ? fecha
+    : `${fecha.replace(' ', 'T')}Z`;
+
+  return new Date(fechaConZona).toLocaleString('es-AR', {
+    dateStyle: 'short',
+    timeStyle: 'medium',
+    timeZone: 'America/Argentina/Buenos_Aires',
+  });
+};
+
+const obtenerFilasDatosSolicitud = (datos: Record<string, any>) => {
+  const filas: [string, string][] = [];
+  const familiaresDestacados = Array.isArray(datos.familiares)
+    ? datos.familiares.filter((familiar: any) => familiar?.esNuevo || familiar?.eliminado)
+    : [];
+  const mostrarSoloCambiosFamiliares = familiaresDestacados.length > 0;
+
+  for (const [campo, valor] of Object.entries(datos)) {
+    if (campo === 'familiares' && Array.isArray(valor)) {
+      const familiaresAMostrar = mostrarSoloCambiosFamiliares
+        ? familiaresDestacados
+        : valor;
+      familiaresAMostrar.forEach((familiar: any, indice: number) => {
+        if (!familiar || typeof familiar !== 'object') return;
+
+        const nombre = [familiar.apellido, familiar.nombres].filter(Boolean).join(' ')
+          || familiar.apeNom
+          || '';
+        if (familiar.eliminado) {
+          filas.push([`FAMILIAR DADO DE BAJA · ${nombre || indice + 1}`, 'Baja lógica solicitada']);
+          return;
+        }
+        const detalles = [
+          familiar.parentesco && `Vínculo: ${familiar.parentesco}`,
+          nombre && `Nombre: ${nombre}`,
+          (familiar.tipoDocumento || familiar.nroDocumento || familiar.dni)
+            && `Documento: ${[familiar.tipoDocumento, familiar.nroDocumento || familiar.dni].filter(Boolean).join(' ')}`,
+          familiar.sexo && `Sexo: ${familiar.sexo}`,
+          (familiar.fechaNacimiento || familiar.f_nacimiento)
+            && `Fecha de nacimiento: ${familiar.fechaNacimiento || familiar.f_nacimiento}`,
+          familiar.discapacitado !== undefined
+            && `Discapacidad: ${familiar.discapacitado ? 'Sí' : 'No'}`,
+        ].filter(Boolean);
+
+        if (detalles.length > 0) {
+          filas.push([`FAMILIAR ${indice + 1}`, detalles.join('\n')]);
+        }
+      });
+      continue;
+    }
+
+    if (mostrarSoloCambiosFamiliares) continue;
+
+    if (campo === 'foto' || valor === null || valor === undefined || valor === '') {
+      continue;
+    }
+
+    if (campo === 'cud' && typeof valor === 'object' && !Array.isArray(valor)) {
+      const detalles = [
+        valor.fechaEmision && `Fecha de emisión: ${valor.fechaEmision}`,
+        valor.fechaVencimiento && `Fecha de vencimiento: ${valor.fechaVencimiento}`,
+        valor.nombreArchivo && `Archivo: ${valor.nombreArchivo}`,
+      ].filter(Boolean);
+
+      if (detalles.length > 0) {
+        filas.push(['CUD', detalles.join('\n')]);
+      }
+      continue;
+    }
+
+    if (typeof valor === 'object') {
+      filas.push([campo.replace(/([A-Z])/g, ' $1').toUpperCase(), JSON.stringify(valor)]);
+      continue;
+    }
+
+    filas.push([campo.replace(/([A-Z])/g, ' $1').toUpperCase(), String(valor)]);
+  }
+
+  return filas;
+};
+
 export const SolicitudesUsuario: React.FC = () => {
   const navigate = useNavigate();
   const [solicitudes, setSolicitudes] = useState<Solicitud[]>([]);
@@ -25,21 +111,16 @@ export const SolicitudesUsuario: React.FC = () => {
   const [cargando, setCargando] = useState(true);
 
   const handleLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('usuNombre');
-    localStorage.removeItem('idRol');
+    authService.logout();
     navigate('/login');
   };
 
-  const token = localStorage.getItem('token') || '';
   const usuNombre = localStorage.getItem('usuNombre') || 'USUARIO';
 
   useEffect(() => {
     const obtenerSolicitudes = async () => {
       try {
-        const res = await axios.get('http://localhost:3000/solicitudes/mis-solicitudes', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const res = await api.get('/solicitudes/mis-solicitudes');
         if (res.data && Array.isArray(res.data)) {
           setSolicitudes(res.data);
         }
@@ -51,7 +132,7 @@ export const SolicitudesUsuario: React.FC = () => {
     };
 
     obtenerSolicitudes();
-  }, [token]);
+  }, []);
 
   const handleVisualizarPDF = () => {
     if (!solicitudSeleccionada) return;
@@ -76,22 +157,32 @@ export const SolicitudesUsuario: React.FC = () => {
     doc.setTextColor(100, 116, 139);
     doc.text('Dirección de Recursos Humanos | Sistema de Legajo Único', 14, 25);
 
+    const tieneFechaRevision = Boolean(solicitudSeleccionada.fechaRevision);
+    const altoCabecera = tieneFechaRevision ? 42 : 34;
+    const finCabecera = 32 + altoCabecera;
+
     // Caja de datos cabecera
     doc.setFillColor(248, 250, 252);
     doc.setDrawColor(226, 232, 240);
-    doc.roundedRect(14, 32, 182, 26, 2, 2, 'FD');
+    doc.roundedRect(14, 32, 182, altoCabecera, 2, 2, 'FD');
 
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9);
     doc.setTextColor(30, 41, 59);
     doc.text('N° SOLICITUD:', 18, 40);
-    doc.text('FECHA REGISTRO:', 18, 48);
-    doc.text('AGENTE / USUARIO:', 18, 54);
+    doc.text('FECHA DE SOLICITUD:', 18, 48);
+    doc.text('AGENTE / USUARIO:', 18, 56);
+    if (tieneFechaRevision) {
+      doc.text('FECHA DE REVISIÓN:', 18, 63);
+    }
 
     doc.setFont('helvetica', 'normal');
     doc.text(`#${solicitudSeleccionada.id}`, 52, 40);
-    doc.text(new Date(solicitudSeleccionada.fechaCreacion).toLocaleString(), 52, 48);
-    doc.text(usuNombre.toUpperCase(), 52, 54);
+    doc.text(formatearFecha(solicitudSeleccionada.fechaCreacion), 58, 48);
+    doc.text(usuNombre.toUpperCase(), 58, 56);
+    if (tieneFechaRevision) {
+      doc.text(formatearFecha(solicitudSeleccionada.fechaRevision), 58, 63);
+    }
 
     doc.setFont('helvetica', 'bold');
     doc.text('ESTADO:', 125, 40);
@@ -105,30 +196,30 @@ export const SolicitudesUsuario: React.FC = () => {
     }
     doc.text(solicitudSeleccionada.estado, 145, 40);
 
-    let startYTable = 66;
+    let startYTable = finCabecera + 8;
     if (solicitudSeleccionada.motivoRechazo) {
+      const yEtiquetaMotivo = finCabecera + 7;
+      const yTextoMotivo = yEtiquetaMotivo + 5;
+
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(8.5);
       doc.setTextColor(100, 116, 139);
-      doc.text('MOTIVO / OBSERVACIONES:', 14, 64);
+      doc.text('MOTIVO / OBSERVACIONES:', 14, yEtiquetaMotivo);
 
       doc.setFont('helvetica', 'italic');
       doc.setTextColor(51, 65, 85);
-      doc.text(solicitudSeleccionada.motivoRechazo, 14, 69);
-      startYTable = 76;
+      const lineasMotivo = doc.splitTextToSize(solicitudSeleccionada.motivoRechazo, 182);
+      doc.text(lineasMotivo, 14, yTextoMotivo);
+      startYTable = yTextoMotivo + lineasMotivo.length * 4.5 + 5;
     }
 
-    // Convertir objeto datosSolicitados a filas
     const datosObj = solicitudSeleccionada.datosSolicitados || {};
-    const filasTabla = Object.entries(datosObj).map(([campo, valor]) => [
-      campo.toUpperCase(),
-      String(valor),
-    ]);
+    const filasTabla = obtenerFilasDatosSolicitud(datosObj);
 
     autoTable(doc, {
       startY: startYTable,
       head: [['CAMPO / CONCEPTO', 'VALOR SOLICITADO']],
-      body: filasTabla,
+      body: filasTabla.length > 0 ? filasTabla : [['DATOS SOLICITADOS', 'No hay datos para mostrar.']],
       theme: 'grid',
       headStyles: {
         fillColor: [30, 41, 59],
@@ -174,6 +265,13 @@ export const SolicitudesUsuario: React.FC = () => {
     }
   };
 
+  const resumenSolicitudes = [
+    { etiqueta: 'Total', cantidad: solicitudes.length, color: '#e5e7eb' },
+    { etiqueta: 'Pendientes', cantidad: solicitudes.filter((sol) => sol.estado === 'PENDIENTE').length, color: '#facc15' },
+    { etiqueta: 'Aprobadas', cantidad: solicitudes.filter((sol) => sol.estado === 'APROBADA').length, color: '#4fb822' },
+    { etiqueta: 'Rechazadas', cantidad: solicitudes.filter((sol) => sol.estado === 'RECHAZADA').length, color: '#f87171' },
+  ];
+
   if (cargando) {
     return (
       <div style={{ backgroundColor: '#121212', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af' }}>
@@ -183,58 +281,28 @@ export const SolicitudesUsuario: React.FC = () => {
   }
 
   return (
-    <div style={pageContainerStyle}>
-      {/* NAVBAR */}
-      <header style={headerNavStyle}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <img
-            src={logoConcordia}
-            alt="Municipalidad de Concordia"
-            style={{
-              height: '40px',
-              width: 'auto',
-              objectFit: 'contain',
-              mixBlendMode: 'screen',
-            }}
-          />
-          <div style={{ borderLeft: '1px solid #333333', paddingLeft: '14px' }}>
-            <div style={{ fontSize: '13px', fontWeight: 700, color: '#f3f4f6', letterSpacing: '0.04em' }}>
-              SISTEMA DE LEGAJO ÚNICO
-            </div>
-          </div>
-        </div>
-
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <button type="button" onClick={() => navigate('/perfil')} style={btnVolverStyle}>
-            ← VOLVER AL LEGAJO
-          </button>
-
-          <button
-            type="button"
-            onClick={handleLogout}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              backgroundColor: '#262626',
-              color: '#f87171',
-              border: '1px solid #3f3f46',
-              borderRadius: '6px',
-              padding: '7px 14px',
-              fontSize: '13px',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-              <polyline points="16 17 21 12 16 7"></polyline>
-              <line x1="21" y1="12" x2="9" y2="12"></line>
-            </svg>
-            Cerrar sesión
-          </button>
-        </div>
-      </header>
+    <div className="solicitudes-user-page" style={pageContainerStyle}>
+      <EncabezadoInstitucional
+        className="institutional-header--spaced"
+        acciones={
+          <>
+            <button
+              type="button"
+              className="institutional-header-action"
+              onClick={() => navigate('/perfil')}
+            >
+              ← VOLVER AL LEGAJO
+            </button>
+            <button
+              type="button"
+              className="institutional-header-action institutional-header-action--logout"
+              onClick={handleLogout}
+            >
+              Cerrar sesión
+            </button>
+          </>
+        }
+      />
 
       {/* CONTENIDO PRINCIPAL */}
       <div style={mainWrapperStyle}>
@@ -255,11 +323,69 @@ export const SolicitudesUsuario: React.FC = () => {
           </span>
         </div>
 
+        <section
+          aria-label="Resumen de solicitudes"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(145px, 1fr))',
+            gap: '10px',
+          }}
+        >
+          {resumenSolicitudes.map((item) => (
+            <div
+              key={item.etiqueta}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+                padding: '14px 16px',
+                backgroundColor: '#181818',
+                border: '1px solid #282828',
+                borderLeft: `3px solid ${item.color}`,
+                borderRadius: '7px',
+              }}
+            >
+              <span style={{ color: '#9ca3af', fontSize: '12px', fontWeight: 600 }}>{item.etiqueta}</span>
+              <strong style={{ color: item.color, fontSize: '20px', lineHeight: 1 }}>{item.cantidad}</strong>
+            </div>
+          ))}
+        </section>
+
         {/* LISTADO DE TARJETAS */}
         <div style={listContainerStyle}>
           {solicitudes.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '30px', color: '#777', backgroundColor: '#181818', borderRadius: '8px' }}>
-              No tenés solicitudes registradas actualmente.
+            <div
+              style={{
+                display: 'flex',
+                minHeight: '220px',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '10px',
+                padding: '28px',
+                backgroundColor: '#181818',
+                border: '1px solid #282828',
+                borderRadius: '8px',
+                textAlign: 'center',
+              }}
+            >
+              <span style={{ color: '#4fb822', fontSize: '11px', fontWeight: 700, letterSpacing: '0.06em' }}>
+                HISTORIAL VACÍO
+              </span>
+              <h3 style={{ margin: 0, color: '#f3f4f6', fontSize: '17px' }}>
+                Todavía no tenés solicitudes
+              </h3>
+              <p style={{ maxWidth: '390px', margin: 0, color: '#9ca3af', fontSize: '13px', lineHeight: 1.5 }}>
+                Cuando envíes una solicitud de modificación del legajo, vas a poder consultar acá su estado y resolución.
+              </p>
+              <button
+                type="button"
+                onClick={() => navigate('/perfil')}
+                style={{ ...btnVerdeStyle, marginTop: '4px' }}
+              >
+                IR A MI LEGAJO
+              </button>
             </div>
           ) : (
             solicitudes.map((sol) => (
@@ -286,8 +412,14 @@ export const SolicitudesUsuario: React.FC = () => {
                   SOLICITUD: #{solicitudSeleccionada.id}
                 </h2>
                 <div style={{ fontSize: '12px', color: '#9ca3af' }}>
-                  REGISTRADA EL {new Date(solicitudSeleccionada.fechaCreacion).toLocaleString()}
+                  SOLICITADA EL {formatearFecha(solicitudSeleccionada.fechaCreacion)}
                 </div>
+                {solicitudSeleccionada.fechaRevision && (
+                  <div style={{ fontSize: '12px', color: '#9ca3af' }}>
+                    {solicitudSeleccionada.estado === 'RECHAZADA' ? 'RECHAZADA' : 'REVISADA'} EL{' '}
+                    {formatearFecha(solicitudSeleccionada.fechaRevision)}
+                  </div>
+                )}
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -338,14 +470,14 @@ export const SolicitudesUsuario: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody>
-                    {solicitudSeleccionada.datosSolicitados && Object.keys(solicitudSeleccionada.datosSolicitados).length > 0 ? (
-                      Object.entries(solicitudSeleccionada.datosSolicitados).map(([campo, valor], i) => (
+                    {obtenerFilasDatosSolicitud(solicitudSeleccionada.datosSolicitados || {}).length > 0 ? (
+                      obtenerFilasDatosSolicitud(solicitudSeleccionada.datosSolicitados || {}).map(([campo, valor], i) => (
                         <tr key={i} style={{ borderBottom: '1px solid #242424' }}>
                           <td style={{ ...tdStyle, fontWeight: 'bold', textTransform: 'uppercase' }}>
-                            {campo.replace(/([A-Z])/g, ' $1')}
+                            {campo}
                           </td>
-                          <td style={{ ...tdStyle, color: '#ffffff', fontWeight: 'bold' }}>
-                            {String(valor)}
+                          <td style={{ ...tdStyle, color: '#ffffff', fontWeight: 'bold', whiteSpace: 'pre-line' }}>
+                            {valor}
                           </td>
                         </tr>
                       ))
@@ -373,33 +505,23 @@ const ItemSolicitudCard: React.FC<{
   badge: { bg: string; color: string; border: string };
   onSeleccionar: () => void;
 }> = ({ sol, badge, onSeleccionar }) => {
-  const [hover, setHover] = useState(false);
-
   return (
     <div
+      className="solicitudes-user-card"
       onClick={onSeleccionar}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        ...cardItemStyle,
-        backgroundColor: hover ? '#162214' : '#181818',
-        borderColor: hover ? '#2e5a1c' : '#282828',
-      }}
+      style={cardItemStyle}
     >
       <div>
-        <strong
-          style={{
-            fontSize: '15px',
-            color: hover ? '#52b72a' : '#ffffff',
-            display: 'block',
-            marginBottom: '4px',
-            transition: 'color 0.2s ease',
-          }}
-        >
+        <strong className="solicitudes-user-card-title">
           SOLICITUD #{sol.id}
         </strong>
-        <div style={{ fontSize: '12px', color: '#888888' }}>
-          Fecha: {new Date(sol.fechaCreacion).toLocaleString()}
+        <div className="solicitudes-user-card-dates">
+          Solicitud: {formatearFecha(sol.fechaCreacion)}
+          {sol.fechaRevision && (
+            <div style={{ marginTop: '3px' }}>
+              {sol.estado === 'RECHAZADA' ? 'Rechazada' : 'Revisada'}: {formatearFecha(sol.fechaRevision)}
+            </div>
+          )}
         </div>
       </div>
 
@@ -415,14 +537,7 @@ const ItemSolicitudCard: React.FC<{
         }}>
           {sol.estado}
         </span>
-        <span
-          style={{
-            color: hover ? '#52b72a' : '#9ca3af',
-            fontSize: '13px',
-            fontWeight: 'bold',
-            transition: 'color 0.2s ease',
-          }}
-        >
+        <span className="solicitudes-user-card-link">
           Ver detalle →
         </span>
       </div>
@@ -434,23 +549,9 @@ const ItemSolicitudCard: React.FC<{
 const pageContainerStyle: React.CSSProperties = {
   minHeight: '100vh',
   backgroundColor: '#121212',
-  backgroundImage: 'radial-gradient(#1f1f1f 1px, transparent 1px)',
-  backgroundSize: '20px 20px',
-  padding: '2rem 1rem',
+  padding: '0 0 2rem',
   fontFamily: 'Segoe UI, Helvetica, Arial, sans-serif',
   boxSizing: 'border-box',
-};
-
-const headerNavStyle: React.CSSProperties = {
-  width: '100%',
-  backgroundColor: '#1a1a1a',
-  borderBottom: '1px solid #2a2a2a',
-  padding: '12px 24px',
-  boxSizing: 'border-box',
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  marginBottom: '28px',
 };
 
 const mainWrapperStyle: React.CSSProperties = {
@@ -578,16 +679,4 @@ const alertObsStyle: React.CSSProperties = {
   fontSize: '12px',
   color: '#f87171',
   marginBottom: '20px',
-};
-
-const btnVolverStyle: React.CSSProperties = {
-  backgroundColor: '#262626',
-  color: '#9ca3af',
-  border: '1px solid #383838',
-  borderRadius: '4px',
-  padding: '6px 12px',
-  fontSize: '11px',
-  fontWeight: 600,
-  cursor: 'pointer',
-  letterSpacing: '0.03em',
 };

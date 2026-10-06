@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import logoConcordia from '../assets/logo2.png';
-import axios from 'axios';
+import api from '../api/axiosClient';
+import { authService } from '../services/auth.service';
+import { EncabezadoInstitucional } from '../componentes/EncabezadoInstitucional';
+import './SolicitudesAdmin.css';
 
 interface SolicitudAdmin {
   id: number;
@@ -13,9 +15,193 @@ interface SolicitudAdmin {
   valorSolicitado: string;
   fecha: string;
   estado: 'PENDIENTE' | 'APROBADA' | 'RECHAZADA';
-  documentoUrl?: string;
   observaciones?: string;
+  datosSolicitados: Record<string, any>;
+  cambios: { campo: string; anterior: string; solicitado: string }[];
 }
+
+const etiquetasCampos: Record<string, string> = {
+  calle: 'CALLE',
+  callenro: 'NÚMERO',
+  barrio: 'BARRIO',
+  ciudad: 'CIUDAD',
+  provincia: 'PROVINCIA',
+  tel1: 'TELÉFONO PRINCIPAL',
+  tel2: 'TELÉFONO ALTERNATIVO',
+  email: 'EMAIL',
+  estadoCivil: 'ESTADO CIVIL',
+  reparticion: 'REPARTICIÓN',
+  funcion: 'FUNCIÓN',
+  certificadoDiscapacidad: 'CERTIFICADO DE DISCAPACIDAD',
+  nacionalidad: 'NACIONALIDAD',
+  apeNom: 'NOMBRE',
+};
+
+const mostrarValor = (valor: unknown): string => {
+  if (valor === null || valor === undefined || valor === '') return 'Sin datos';
+  if (typeof valor === 'boolean') return valor ? 'Sí' : 'No';
+  if (typeof valor === 'string' && valor.startsWith('data:')) return 'Archivo adjunto';
+  if (typeof valor === 'object') return JSON.stringify(valor);
+  return String(valor);
+};
+
+const describirCud = (cud: unknown): string => {
+  if (!cud) return 'No posee CUD';
+  if (typeof cud !== 'object') return mostrarValor(cud);
+
+  const datos = cud as Record<string, unknown>;
+  const detalles = [
+    datos.fechaEmision && `Emisión: ${mostrarValor(datos.fechaEmision)}`,
+    datos.fechaVencimiento && `Vencimiento: ${mostrarValor(datos.fechaVencimiento)}`,
+    datos.nombreArchivo && `Archivo: ${mostrarValor(datos.nombreArchivo)}`,
+    datos.archivoPresente && !datos.nombreArchivo && 'Archivo adjunto',
+  ].filter(Boolean);
+  return detalles.length > 0 ? detalles.join(' · ') : 'CUD declarado sin archivo';
+};
+
+const obtenerCambiosSolicitud = (datos: Record<string, any>) => {
+  const valoresAnteriores = datos.valoresAnteriores || {};
+  const cambios: { campo: string; anterior: string; solicitado: string }[] = [];
+  const clavesInternas = new Set(['familiares', 'cud', 'valoresAnteriores', 'foto']);
+
+  for (const [campo, valor] of Object.entries(datos)) {
+    if (clavesInternas.has(campo) || valor === null || valor === undefined || valor === '') continue;
+    cambios.push({
+      campo: etiquetasCampos[campo] || campo.replace(/([A-Z])/g, ' $1').toUpperCase(),
+      anterior: Object.prototype.hasOwnProperty.call(valoresAnteriores, campo)
+        ? mostrarValor(valoresAnteriores[campo])
+        : 'No guardado en esta solicitud',
+      solicitado: mostrarValor(valor),
+    });
+  }
+
+  if (typeof datos.foto === 'string' && datos.foto) {
+    cambios.push({
+      campo: 'FOTO',
+      anterior: valoresAnteriores.foto || 'No guardado en esta solicitud',
+      solicitado: datos.nombreArchivoFoto || 'Nueva foto adjunta',
+    });
+  }
+
+  if (Object.prototype.hasOwnProperty.call(datos, 'cud')) {
+    cambios.push({
+      campo: 'CERTIFICADO CUD',
+      anterior: valoresAnteriores.cud
+        ? describirCud(valoresAnteriores.cud)
+        : 'No guardado en esta solicitud',
+      solicitado: describirCud(datos.cud),
+    });
+  }
+
+  if (Array.isArray(datos.familiares)) {
+    const familiaresAnteriores: Record<string, any>[] = Array.isArray(valoresAnteriores.familiares)
+      ? valoresAnteriores.familiares
+      : [];
+    for (const familiar of datos.familiares) {
+      if (!familiar || typeof familiar !== 'object') continue;
+      const nombre = [familiar.apellido, familiar.nombres].filter(Boolean).join(' ')
+        || familiar.apeNom
+        || 'Familiar';
+      if (familiar.esNuevo) {
+        cambios.push({
+          campo: `FAMILIAR AGREGADO · ${nombre}`,
+          anterior: 'No existía',
+          solicitado: [
+            familiar.parentesco && `Vínculo: ${familiar.parentesco}`,
+            (familiar.tipoDocumento || familiar.nroDocumento)
+              && `Documento: ${[familiar.tipoDocumento, familiar.nroDocumento].filter(Boolean).join(' ')}`,
+            familiar.sexo && `Sexo: ${familiar.sexo}`,
+            familiar.fechaNacimiento && `Fecha de nacimiento: ${familiar.fechaNacimiento}`,
+            familiar.discapacitado !== undefined
+              && `CUD: ${familiar.discapacitado ? 'Sí' : 'No'}`,
+            familiar.nombreArchivoCud && `Archivo CUD: ${familiar.nombreArchivoCud}`,
+          ].filter(Boolean).join(' · ') || 'Alta de familiar',
+        });
+        continue;
+      }
+
+      const anterior = familiaresAnteriores.find(
+        (item) => Number(item.idFamiliar) === Number(familiar.idFamiliar),
+      );
+      if (familiar.eliminado) {
+        const datosAnteriores = anterior
+          ? [
+              anterior.parentesco && `Vínculo: ${anterior.parentesco}`,
+              [anterior.apellido, anterior.nombres].filter(Boolean).join(' ') || anterior.apeNom,
+              (anterior.tipoDocumento || anterior.nroDocumento)
+                && `Documento: ${[anterior.tipoDocumento, anterior.nroDocumento].filter(Boolean).join(' ')}`,
+            ].filter(Boolean).join(' · ')
+          : 'Datos anteriores no guardados';
+        cambios.push({
+          campo: `FAMILIAR DADO DE BAJA · ${nombre}`,
+          anterior: datosAnteriores,
+          solicitado: 'Baja lógica',
+        });
+        continue;
+      }
+
+      for (const [campo, valor] of Object.entries(familiar)) {
+        if (['idFamiliar', 'esNuevo', 'eliminado', 'archivoCud', 'nombreArchivoCud'].includes(campo)) continue;
+        cambios.push({
+          campo: `${etiquetasCampos[campo] || campo.toUpperCase()} · ${nombre}`,
+          anterior: anterior && Object.prototype.hasOwnProperty.call(anterior, campo)
+            ? mostrarValor(anterior[campo])
+            : 'No guardado en esta solicitud',
+          solicitado: mostrarValor(valor),
+        });
+      }
+    }
+  }
+
+  return cambios;
+};
+
+interface ArchivoSolicitud {
+  nombre: string;
+  url: string;
+  tipo: 'imagen' | 'documento';
+}
+
+const obtenerArchivoSolicitud = (
+  contenido: unknown,
+  nombre: unknown,
+  tipo: ArchivoSolicitud['tipo'],
+): ArchivoSolicitud | null => {
+  if (typeof contenido !== 'string' || !contenido.trim()) return null;
+
+  const url = contenido.trim();
+  const mimePermitidos = tipo === 'imagen'
+    ? /^data:image\/(?:png|jpeg|jpg);base64,/i
+    : /^data:(?:application\/pdf|image\/(?:png|jpeg|jpg));base64,/i;
+  const esDataUrlPermitida = mimePermitidos.test(url);
+  const esUrlWeb = /^https?:\/\//i.test(url);
+  const esRutaLocal = /^\/(?!\/)/.test(url);
+
+  if (!esDataUrlPermitida && !esUrlWeb && !esRutaLocal) return null;
+
+  return {
+    nombre: typeof nombre === 'string' && nombre.trim()
+      ? nombre.trim()
+      : tipo === 'imagen' ? 'Foto adjunta' : 'Certificado CUD',
+    url,
+    tipo,
+  };
+};
+
+const formatearFechaSolicitud = (fecha?: string | Date | null) => {
+  if (!fecha) return '';
+
+  const fechaTexto = fecha instanceof Date ? fecha.toISOString() : fecha;
+  const fechaConZona = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(fechaTexto)
+    ? fechaTexto
+    : `${fechaTexto.replace(' ', 'T')}Z`;
+
+  return new Date(fechaConZona).toLocaleString('es-AR', {
+    dateStyle: 'short',
+    timeStyle: 'medium',
+    timeZone: 'America/Argentina/Buenos_Aires',
+  });
+};
 
 export const SolicitudesAdmin: React.FC = () => {
   const navigate = useNavigate();
@@ -43,64 +229,63 @@ const cerrarModal = () => {
 
   // Estados reales (inician vacíos)
   const [solicitudes, setSolicitudes] = useState<SolicitudAdmin[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
   const [filtroEstado, setFiltroEstado] = useState<string>('TODAS');
   const [busqueda, setBusqueda] = useState('');
   const [solicitudSeleccionada, setSolicitudSeleccionada] = useState<SolicitudAdmin | null>(null);
   const [motivoResolucion, setMotivoResolucion] = useState('');
 
-  // 1. Obtener usuario logueado para no mostrar sus propias solicitudes
-  const usuarioActual = JSON.parse(localStorage.getItem('usuario') || '{}');
-  const miUsuCodigo = usuarioActual?.usucodigo || usuarioActual?.id;
-
   // 2. Traer solicitudes reales y mapear los campos para la vista
   const cargarSolicitudes = async () => {
     try {
-      setLoading(true);
-      const token = localStorage.getItem('token');
-      const res = await axios.get('http://localhost:3000/solicitudes', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await api.get('/solicitudes');
 
       const lista = Array.isArray(res.data) ? res.data : [];
 
       // Mapeamos los datos de PostgreSQL al formato que espera tu JSX
-      const adaptadas: SolicitudAdmin[] = lista
-        .filter((s: any) => (s.usuCodigo ?? s.usucodigo) !== miUsuCodigo)
-        .map((s: any) => {
-          const ds = s.datosSolicitados || {};
-          
-          // Detectar qué dato se solicitó actualizar
-          let campoDetectado = 'DATOS PERSONALES';
-          let valorNuevo = '-';
+      const adaptadas: SolicitudAdmin[] = lista.map((s: any) => {
+        const ds = s.datosSolicitados || {};
+        const cambios = obtenerCambiosSolicitud(ds);
+        const familiaresNuevos = Array.isArray(ds.familiares)
+          ? ds.familiares.filter((familiar: any) => familiar?.esNuevo)
+          : [];
 
-          if (ds.email) {
-            campoDetectado = 'EMAIL';
-            valorNuevo = ds.email;
-          } else if (ds.estadoCivil) {
-            campoDetectado = 'ESTADO CIVIL';
-            valorNuevo = ds.estadoCivil;
-          } else if (ds.calle || ds.callenro) {
-            campoDetectado = 'DOMICILIO';
-            valorNuevo = `${ds.calle || ''} ${ds.callenro || ''}`.trim();
-          }
+        // Detectar qué dato se solicitó actualizar
+        let campoDetectado = 'DATOS PERSONALES';
+        let valorNuevo = '-';
 
-          return {
-            id: s.id,
-            usuCodigo: s.usuCodigo ?? s.usucodigo,
-            nroSolicitud: `SOL-2026-${String(s.id).padStart(5, '0')}`,
-            legajo: String(s.legajo ?? ds.legajo ?? 'S/L'),
-            agente: s.agente || ds.apenom || `Usuario #${s.usuCodigo ?? s.usucodigo}`,
-            campo: campoDetectado,
-            valorAnterior: '(Ver en legajo)',
-            valorSolicitado: valorNuevo,
-            fecha: s.fechaCreacion ? s.fechaCreacion.substring(0, 16).replace('T', ' ') : '',
-            estado: s.estado,
-            documentoUrl: ds.archivoCudUrl || ds.documentoUrl || null,
-            observaciones: s.motivoRechazo || s.observacion || '',
-            datosSolicitados: ds,
-          };
-        });
+        if (familiaresNuevos.length > 0) {
+          campoDetectado = familiaresNuevos.length === 1 ? 'FAMILIAR NUEVO' : 'FAMILIARES NUEVOS';
+          valorNuevo = familiaresNuevos
+            .map((familiar: any) => `${familiar.apellido || ''} ${familiar.nombres || ''}`.trim())
+            .filter(Boolean)
+            .join(', ');
+        } else if (ds.email) {
+          campoDetectado = 'EMAIL';
+          valorNuevo = ds.email;
+        } else if (ds.estadoCivil) {
+          campoDetectado = 'ESTADO CIVIL';
+          valorNuevo = ds.estadoCivil;
+        } else if (ds.calle || ds.callenro) {
+          campoDetectado = 'DOMICILIO';
+          valorNuevo = `${ds.calle || ''} ${ds.callenro || ''}`.trim();
+        }
+
+        return {
+          id: s.id,
+          usuCodigo: s.usuCodigo ?? s.usucodigo,
+          nroSolicitud: `SOL-2026-${String(s.id).padStart(5, '0')}`,
+          legajo: String(s.legajo ?? ds.legajo ?? 'S/L'),
+          agente: s.agente || ds.apenom || `Usuario #${s.usuCodigo ?? s.usucodigo}`,
+          campo: cambios.length > 1 ? `${cambios.length} CAMBIOS` : cambios[0]?.campo || campoDetectado,
+          valorAnterior: cambios[0]?.anterior || 'No guardado en esta solicitud',
+          valorSolicitado: cambios[0]?.solicitado || valorNuevo,
+          fecha: formatearFechaSolicitud(s.fechaCreacion),
+          estado: s.estado,
+          observaciones: s.motivoRechazo || s.observacion || '',
+          datosSolicitados: ds,
+          cambios,
+        };
+      });
 
       setSolicitudes(adaptadas);
       if (adaptadas.length > 0) {
@@ -110,8 +295,6 @@ const cerrarModal = () => {
       }
     } catch (err) {
       console.error('Error cargando solicitudes:', err);
-    } finally {
-      setLoading(false);
     }
   };
 useEffect(() => {
@@ -119,8 +302,7 @@ useEffect(() => {
   }, []);
 
   const handleLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('usuario');
+    authService.logout();
     navigate('/login');
   };
 
@@ -138,15 +320,13 @@ useEffect(() => {
     }
 
     try {
-      const token = localStorage.getItem('token');
       const endpoint = nuevoEstado === 'APROBADA'
-        ? `http://localhost:3000/solicitudes/${solicitudSeleccionada.id}/aprobar`
-        : `http://localhost:3000/solicitudes/${solicitudSeleccionada.id}/rechazar`;
+        ? `/solicitudes/${solicitudSeleccionada.id}/aprobar`
+        : `/solicitudes/${solicitudSeleccionada.id}/rechazar`;
 
-      await axios.patch(
+      await api.patch(
         endpoint,
         nuevoEstado === 'RECHAZADA' ? { motivoRechazo: motivoResolucion } : {},
-        { headers: { Authorization: `Bearer ${token}` } }
       );
 
       mostrarNotificacion(
@@ -179,114 +359,75 @@ useEffect(() => {
     return matchEstado && (nro.includes(term) || legajo.includes(term) || agente.includes(term));
   });
 
+  const datosSolicitudSeleccionada = solicitudSeleccionada?.datosSolicitados || {};
+  const cudSolicitud = datosSolicitudSeleccionada.cud;
+  const archivoCud = obtenerArchivoSolicitud(
+    typeof cudSolicitud === 'string'
+      ? cudSolicitud
+      : cudSolicitud?.archivo || cudSolicitud?.archivoCudUrl || datosSolicitudSeleccionada.archivoCudUrl || datosSolicitudSeleccionada.documentoUrl,
+    cudSolicitud?.nombreArchivo || cudSolicitud?.nombre || datosSolicitudSeleccionada.nombreArchivoCud,
+    'documento',
+  );
+  const fotoSolicitud = obtenerArchivoSolicitud(
+    datosSolicitudSeleccionada.foto,
+    datosSolicitudSeleccionada.nombreArchivoFoto,
+    'imagen',
+  );
+  const archivosCudFamiliares = Array.isArray(datosSolicitudSeleccionada.familiares)
+    ? datosSolicitudSeleccionada.familiares
+      .map((familiar: Record<string, unknown>, indice: number) => ({
+        familiar: familiar.apellido || familiar.nombres
+          ? [familiar.apellido, familiar.nombres].filter(Boolean).join(' ')
+          : `familiar ${indice + 1}`,
+        archivo: obtenerArchivoSolicitud(
+          familiar.archivoCud,
+          familiar.nombreArchivoCud,
+          'documento',
+        ),
+      }))
+      .filter((item: { familiar: string; archivo: ArchivoSolicitud | null }) => item.archivo)
+    : [];
+
   return (
-    <div style={{
-      minHeight: '100vh',
-      width: '100%',
-      backgroundColor: '#121212',
-      color: '#ffffff',
-      margin: 0,
-      padding: 0,
-      boxSizing: 'border-box',
-      display: 'flex',
-      flexDirection: 'column',
-    }}>
+    <div className="solicitudes-admin-page">
 
 
-      {/* NAVBAR SUPERIOR INSTITUCIONAL */}
-<header style={{
-  width: '100%',
-  backgroundColor: '#1a1a1a',
-  borderBottom: '1px solid #2a2a2a',
-  padding: '12px 24px',
-  boxSizing: 'border-box',
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-}}>
-  {/* LOGO */}
-  <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-    <img src={logoConcordia} alt="Concordia" style={{ height: '38px', mixBlendMode: 'screen' }} />
-    <div style={{ borderLeft: '1px solid #333333', paddingLeft: '14px' }}>
-      <div style={{ fontSize: '13px', fontWeight: 700, color: '#f3f4f6' }}>
-        SISTEMA DE LEGAJO ÚNICO
-      </div>
-    </div>
-  </div>
-
-  {/* NAVEGACIÓN (Rol autorizador y datos personales) */}
-  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-    
-    {/* VISTA PERSONAL DEL ADMIN */}
-    <button
-      onClick={() => navigate('/perfil')}
-      style={{
-        backgroundColor: '#262626',
-        color: '#93c5fd', 
-        border: '1px solid #1e3a8a',
-        borderRadius: '6px',
-        padding: '7px 12px',
-        fontSize: '12px',
-        fontWeight: 600,
-        cursor: 'pointer',
-      }}
-    >
-     Mis datos / Solicitar cambio
-    </button>
-
-
-  
-    {/* SALIR */}
-    <button
-      onClick={handleLogout}
-      style={{
-        backgroundColor: '#262626',
-        color: '#f87171',
-        border: '1px solid #3f3f46',
-        borderRadius: '6px',
-        padding: '7px 12px',
-        fontSize: '12px',
-        fontWeight: 600,
-        cursor: 'pointer',
-      }}
-    >
-      Cerrar sesión
-    </button>
-  </div>
-</header>
+      <EncabezadoInstitucional
+        className="solicitudes-admin-header"
+        acciones={
+          <>
+            <button
+              type="button"
+              className="institutional-header-action"
+              onClick={() => navigate('/perfil')}
+            >
+              Mis datos / Solicitar cambio
+            </button>
+            <button
+              type="button"
+              className="institutional-header-action institutional-header-action--logout"
+              onClick={handleLogout}
+            >
+              Cerrar sesión
+            </button>
+          </>
+        }
+      />
 
       {/* 2. CUERPO PRINCIPAL */}
-      <main style={{ maxWidth: '1250px', width: '100%', margin: '20px auto', padding: '0 20px', boxSizing: 'border-box' }}>
+      <main className="solicitudes-admin-main">
         
         {/* FILTROS Y BÚSQUEDA */}
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          backgroundColor: '#18181b',
-          border: '1px solid #27272a',
-          borderRadius: '8px',
-          padding: '12px 16px',
-          marginBottom: '20px',
-          gap: '16px',
-        }}>
+        <div className="solicitudes-admin-toolbar">
           <input
+            className="solicitudes-admin-search"
             type="text"
             placeholder="Buscar por legajo, apellido o N° solicitud..."
             value={busqueda}
             onChange={(e) => setBusqueda(e.target.value)}
-            style={{
-              backgroundColor: '#121212',
-              border: '1px solid #3f3f46',
-              borderRadius: '6px',
-              color: '#fff',
-              padding: '8px 14px',
-              fontSize: '13px',
-              width: '320px',
-            }}
           />
 
-          <div style={{ display: 'flex', gap: '8px' }}>
+          <div className="solicitudes-admin-filters">
             {['TODAS', 'PENDIENTE', 'APROBADA', 'RECHAZADA'].map((estado) => (
               <button
                 key={estado}
@@ -309,21 +450,28 @@ useEffect(() => {
         </div>
 
         {/* CONTENEDOR 2 COLUMNAS */}
-        <div style={{ display: 'grid', gridTemplateColumns: '420px 1fr', gap: '20px' }}>
+        <div className="solicitudes-admin-workspace">
           
           {/* BANDEJA IZQUIERDA */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            {solicitudesFiltradas.map((s) => (
-              <div
+          <aside className="solicitudes-admin-inbox">
+            <div className="solicitudes-admin-section-heading">
+              <div>
+                <h2>Solicitudes</h2>
+                <span>Revisá los cambios antes de resolverlos</span>
+              </div>
+              <span className="solicitudes-admin-count">{solicitudesFiltradas.length}</span>
+            </div>
+            <div className="solicitudes-admin-list">
+            {solicitudesFiltradas.length === 0 ? (
+              <div className="solicitudes-admin-empty">
+                No hay solicitudes que coincidan con estos filtros.
+              </div>
+            ) : solicitudesFiltradas.map((s) => (
+              <button
+                type="button"
                 key={s.id}
                 onClick={() => setSolicitudSeleccionada(s)}
-                style={{
-                  backgroundColor: solicitudSeleccionada?.id === s.id ? '#1e293b' : '#18181b',
-                  border: `1px solid ${solicitudSeleccionada?.id === s.id ? '#22c55e' : '#27272a'}`,
-                  borderRadius: '8px',
-                  padding: '14px',
-                  cursor: 'pointer',
-                }}
+                className={`solicitudes-admin-card${solicitudSeleccionada?.id === s.id ? ' is-selected' : ''}`}
               >
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
                   <strong style={{ fontSize: '13px', color: '#f3f4f6' }}>{s.nroSolicitud}</strong>
@@ -341,130 +489,132 @@ useEffect(() => {
                 <div style={{ fontSize: '13px', fontWeight: 600, color: '#e2e8f0' }}>{s.agente}</div>
                 <div style={{ fontSize: '12px', color: '#94a3b8' }}>Legajo: {s.legajo} | {s.campo}</div>
                 <div style={{ fontSize: '11px', color: '#64748b', marginTop: '6px' }}>{s.fecha}</div>
-              </div>
+              </button>
             ))}
-          </div>
+            </div>
+          </aside>
 
           {/* AUDITORÍA Y RESOLUCIÓN DERECHA */}
           {solicitudSeleccionada ? (
-            <div style={{
-              backgroundColor: '#18181b',
-              border: '1px solid #27272a',
-              borderRadius: '8px',
-              padding: '24px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '20px',
-            }}>
-              <div>
-                <span style={{ fontSize: '11px', color: '#22c55e', fontWeight: 700 }}>EXPEDIENTE DIGITAL</span>
-                <h3 style={{ margin: '4px 0 0 0', fontSize: '1.3rem' }}>{solicitudSeleccionada.nroSolicitud}</h3>
-                <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: '#94a3b8' }}>
+            <section className="solicitudes-admin-detail">
+              <div className="solicitudes-admin-detail-header">
+                <div>
+                  <span className="solicitudes-admin-eyebrow">EXPEDIENTE DIGITAL</span>
+                  <h2>{solicitudSeleccionada.nroSolicitud}</h2>
+                  <p>
                   Agente: <strong style={{ color: '#fff' }}>{solicitudSeleccionada.agente}</strong> (Legajo: {solicitudSeleccionada.legajo})
-                </p>
+                  </p>
+                </div>
+                <span className={`solicitudes-admin-status status-${solicitudSeleccionada.estado.toLowerCase()}`}>
+                  {solicitudSeleccionada.estado}
+                </span>
               </div>
 
               {/* TABLA COMPARATIVA */}
-              <div style={{ backgroundColor: '#121212', borderRadius: '6px', padding: '14px', border: '1px solid #27272a' }}>
-                <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>CAMBIO SOLICITADO: {solicitudSeleccionada.campo}</span>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '10px' }}>
-                  <div>
-                    <label style={{ fontSize: '11px', color: '#ef4444' }}>VALOR ANTERIOR (EN BASE)</label>
-                    <div style={{ fontSize: '14px', fontWeight: 600, marginTop: '4px' }}>{solicitudSeleccionada.valorAnterior}</div>
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '11px', color: '#22c55e' }}>NUEVO VALOR DECLARADO</label>
-                    <div style={{ fontSize: '14px', fontWeight: 600, marginTop: '4px', color: '#4ade80' }}>{solicitudSeleccionada.valorSolicitado}</div>
-                  </div>
+              <div className="solicitudes-admin-change">
+                <div className="solicitudes-admin-changes-table-wrap">
+                  <table className="solicitudes-admin-changes-table">
+                    <thead>
+                      <tr>
+                        <th>CAMPO</th>
+                        <th>VALOR ANTERIOR</th>
+                        <th>VALOR MODIFICADO</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {solicitudSeleccionada.cambios.length > 0
+                        ? solicitudSeleccionada.cambios.map((cambio, indice) => (
+                          <tr key={`${cambio.campo}-${indice}`}>
+                            <th scope="row">{cambio.campo}</th>
+                            <td>{cambio.anterior}</td>
+                            <td className="is-requested">{cambio.solicitado}</td>
+                          </tr>
+                        ))
+                        : (
+                          <tr>
+                            <th scope="row">{solicitudSeleccionada.campo}</th>
+                            <td>No guardado en esta solicitud</td>
+                            <td className="is-requested">{solicitudSeleccionada.valorSolicitado}</td>
+                          </tr>
+                        )}
+                    </tbody>
+                  </table>
                 </div>
               </div>
 
               {/* DOCUMENTO ADJUNTO */}
-              <div>
-                <span style={{ fontSize: '12px', color: '#94a3b8', fontWeight: 600 }}>DOCUMENTACIÓN RESPALDATORIA</span>
-                <div style={{ marginTop: '8px' }}>
-                  <button
-                    onClick={() => alert('Abriendo documento...')}
-                    style={{
-                      backgroundColor: '#262626',
-                      border: '1px solid #3f3f46',
-                      color: '#60a5fa',
-                      borderRadius: '6px',
-                      padding: '8px 14px',
-                      fontSize: '13px',
-                      cursor: 'pointer',
-                    }}
-                  >
-                    📄 Ver Certificado / Acta Adjunta (PDF)
-                  </button>
+              <div className="solicitudes-admin-documents">
+                <div>
+                  <span className="solicitudes-admin-block-title">ARCHIVOS DE LA SOLICITUD</span>
+                  {archivoCud || fotoSolicitud || archivosCudFamiliares.length > 0 ? (
+                    <div className="solicitudes-admin-file-links">
+                      {archivoCud && (
+                        <a href={archivoCud.url} target="_blank" rel="noreferrer">
+                          Ver certificado CUD · {archivoCud.nombre}
+                        </a>
+                      )}
+                      {fotoSolicitud && (
+                        <a href={fotoSolicitud.url} target="_blank" rel="noreferrer">
+                          Ver foto adjunta · {fotoSolicitud.nombre}
+                        </a>
+                      )}
+                      {archivosCudFamiliares.map((item: { familiar: string; archivo: ArchivoSolicitud | null }, indice: number) => item.archivo && (
+                        <a
+                          key={`${item.familiar}-${indice}`}
+                          href={item.archivo.url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Ver CUD de {item.familiar} · {item.archivo.nombre}
+                        </a>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="solicitudes-admin-no-files">Esta solicitud no posee archivos adjuntos.</p>
+                  )}
                 </div>
               </div>
 
               {/* CAMPO DE DICTAMEN / MOTIVO */}
               {solicitudSeleccionada.estado === 'PENDIENTE' ? (
-                <div>
-                  <label style={{ fontSize: '12px', color: '#94a3b8', fontWeight: 600 }}>OBSERVACIONES DE RRHH</label>
+                <div className="solicitudes-admin-resolution">
+                  <label className="solicitudes-admin-block-title">OBSERVACIONES DE RRHH</label>
                   <textarea
+                    className="solicitudes-admin-textarea"
                     rows={3}
                     placeholder="Escriba aquí los fundamentos (obligatorio en caso de rechazo)..."
                     value={motivoResolucion}
                     onChange={(e) => setMotivoResolucion(e.target.value)}
-                    style={{
-                      width: '100%',
-                      backgroundColor: '#121212',
-                      border: '1px solid #3f3f46',
-                      borderRadius: '6px',
-                      color: '#fff',
-                      padding: '10px',
-                      marginTop: '6px',
-                      boxSizing: 'border-box',
-                    }}
                   />
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '14px' }}>
+                  <div className="solicitudes-admin-actions">
                     <button
+                      className="solicitudes-admin-reject"
                       onClick={() => handleResolver('RECHAZADA')}
-                      style={{
-                        backgroundColor: '#7f1d1d',
-                        color: '#fecaca',
-                        border: 'none',
-                        borderRadius: '6px',
-                        padding: '10px 18px',
-                        fontWeight: 700,
-                        fontSize: '13px',
-                        cursor: 'pointer',
-                      }}
                     >
                       Rechazar Solicitud
                     </button>
                     <button
+                      className="solicitudes-admin-approve"
                       onClick={() => handleResolver('APROBADA')}
-                      style={{
-                        backgroundColor: '#22c55e',
-                        color: '#000000',
-                        border: 'none',
-                        borderRadius: '6px',
-                        padding: '10px 18px',
-                        fontWeight: 700,
-                        fontSize: '13px',
-                        cursor: 'pointer',
-                      }}
                     >
                       Aprobar y Actualizar Legajo
                     </button>
                   </div>
                 </div>
               ) : (
-                <div style={{ padding: '12px', backgroundColor: '#121212', borderRadius: '6px', border: '1px solid #27272a' }}>
-                  <span style={{ fontSize: '11px', color: '#71717a' }}>RESOLUCIÓN FINAL</span>
-                  <div style={{ fontSize: '13px', marginTop: '4px', color: '#e2e8f0' }}>
+                <div className="solicitudes-admin-final-resolution">
+                  <span className="solicitudes-admin-block-title">RESOLUCIÓN FINAL</span>
+                  <div>
                     {solicitudSeleccionada.observaciones || 'Trámite procesado sin observaciones asentadas.'}
                   </div>
                 </div>
               )}
-            </div>
+            </section>
           ) : (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#71717a' }}>
-              Seleccione una solicitud para auditar
+            <div className="solicitudes-admin-no-selection">
+              <span className="solicitudes-admin-eyebrow">BANDEJA DE REVISIÓN</span>
+              <h2>Seleccioná una solicitud</h2>
+              <p>Los datos del trámite y las acciones disponibles aparecerán acá.</p>
             </div>
           )}
         </div>

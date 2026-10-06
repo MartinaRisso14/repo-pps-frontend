@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
-import logoConcordia from '../assets/logo2.png';
+import api from '../api/axiosClient';
+import { authService } from '../services/auth.service';
+import { EncabezadoInstitucional } from '../componentes/EncabezadoInstitucional';
 
 interface Familiar {
   idFamiliar?: number;
@@ -18,6 +19,10 @@ interface Familiar {
   nombreArchivoCud?: string;
 }
 
+interface FuncionDisponible {
+  idfuncion: number;
+  funcion: string;
+}
 
 export const PerfilUsuario: React.FC = () => {
   const navigate = useNavigate();
@@ -25,17 +30,17 @@ export const PerfilUsuario: React.FC = () => {
   const [modoEdicion, setModoEdicion] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState<{ tipo: 'exito' | 'error'; texto: string } | null>(null);
+  const [funcionesDisponibles, setFuncionesDisponibles] = useState<FuncionDisponible[]>([]);
   
 
   
   const handleLogout = () => {
-  localStorage.removeItem('token'); // o sessionStorage
-  localStorage.removeItem('usuario');
+  authService.logout();
   navigate('/login');
   };
 
   // Datos del empleado 
-// 1. Datos fijos (inmutables) del empleado
+// 1. Datos fijos del empleado
 const [empleadoFijo, setEmpleadoFijo] = useState({
   legajo: '',
   apellido: '',
@@ -62,7 +67,6 @@ const [datosForm, setDatosForm] = useState({
   reparticion: '',
   funcion: '',
   foto: '',
-  certificadoDiscapacidad: '',
   tieneCud: false,
   cudFechaEmision: '',
   cudFechaVencimiento: '',
@@ -84,7 +88,6 @@ const [datosOriginales, setDatosOriginales] = useState({
   reparticion: '',
   funcion: '',
   foto: '',
-  certificadoDiscapacidad: '',
   tieneCud: false,
   cudFechaEmision: '',
   cudFechaVencimiento: '',
@@ -92,31 +95,23 @@ const [datosOriginales, setDatosOriginales] = useState({
   cudNombreArchivo: '',
 });
 
-const FUNCIONES_DISPONIBLES = [
-  'OPERARIO',
-  'MAESTRANZA',
-  'CHOFER',
-  'GUARDAVIDA',
-  'GUARDAPARQUES',
-  'GUIAS TURISTICOS',
-  'INSPECTOR',
-  'PROFESIONAL DE SALUD',
-  'DOCENTE',
-  'PROFESIONAL INFORMATICO',
-  'PROFESIONAL EN GENERAL',
-  'TECNICOS EN GRAL',
-  'PERSONAL DE SEGURIDAD',
-  'CAJERO',
-  'JUEZ',
-  'FISCAL',
-  'CONCEJAL',
-];
-
   const [familiaresOriginales, setFamiliaresOriginales] = useState<Familiar[]>([]);
 
   const [familiares, setFamiliares] = useState<Familiar[]>(familiaresOriginales);
 
- const [nuevoFamiliar, setNuevoFamiliar] = useState<Familiar>({
+  const camposFamiliaresComparables: (keyof Familiar)[] = [
+    'apellido',
+    'nombres',
+    'tipoDocumento',
+    'nroDocumento',
+    'sexo',
+    'fechaNacimiento',
+    'parentesco',
+    'discapacitado',
+    'archivoCud',
+  ];
+
+   const [nuevoFamiliar, setNuevoFamiliar] = useState<Familiar>({
   apellido: '',
   nombres: '',
   tipoDocumento: 'DNI',
@@ -130,7 +125,6 @@ const FUNCIONES_DISPONIBLES = [
 });
 
   const [mostrarModalFamiliar, setMostrarModalFamiliar] = useState(false);
-  const token = localStorage.getItem('token') || '';
   const usuNombre = localStorage.getItem('usuNombre') || '';
   const [indiceEditandoFamiliar, setIndiceEditandoFamiliar] = useState<number | null>(null);
 
@@ -141,7 +135,6 @@ const handleEditarFamiliar = (idx: number) => {
   const fam = familiares[idx];
   setIndiceEditandoFamiliar(idx);
 
- // 1. Obtenemos solo fam.fechaNacimiento (sin f_nacimiento)
   const rawFecha = fam.fechaNacimiento;
   const fechaFormateada = rawFecha
     ? (typeof rawFecha === 'string' ? rawFecha : new Date(rawFecha).toISOString()).substring(0, 10)
@@ -161,11 +154,9 @@ const handleEditarFamiliar = (idx: number) => {
     nombreArchivoCud: fam.nombreArchivoCud || '',
   });
 
-  // Abrir el popup
   setMostrarModalFamiliar(true);
 };
 
-// Al hacer clic en "AGREGAR VINCULO" (nuevo familiar)
 const handleNuevoFamiliar = () => {
   setIndiceEditandoFamiliar(null);
   setNuevoFamiliar({
@@ -183,7 +174,6 @@ const handleGuardarFamiliar = () => {
     return;
   }
 
-  // 2. Crear una copia congelada de los datos actuales del formulario
   const familiarAGuardar = {
     ...nuevoFamiliar,
     apellido: nuevoFamiliar.apellido.trim().toUpperCase(),
@@ -191,12 +181,15 @@ const handleGuardarFamiliar = () => {
     discapacitado: Boolean(nuevoFamiliar.discapacitado),
   };
 
-  // 3. Guardar en el array según si se está editando o creando nuevo
   if (indiceEditandoFamiliar !== null) {
-    // Modo edición: actualiza exactamente la posición seleccionada
     setFamiliares((prev) => {
       const actualizados = [...prev];
-      actualizados[indiceEditandoFamiliar] = familiarAGuardar;
+      actualizados[indiceEditandoFamiliar] = {
+        ...prev[indiceEditandoFamiliar],
+        ...familiarAGuardar,
+        idFamiliar: prev[indiceEditandoFamiliar].idFamiliar,
+        numFamiliar: prev[indiceEditandoFamiliar].numFamiliar,
+      };
       return actualizados;
     });
   } else {
@@ -204,11 +197,9 @@ const handleGuardarFamiliar = () => {
     setFamiliares((prev) => [...prev, familiarAGuardar]);
   }
 
-  // 4. Cerrar el modal y resetear el índice de edición
   setMostrarModalFamiliar(false);
   setIndiceEditandoFamiliar(null);
 
-  // 5. Limpiar el formulario para la próxima apertura
   setNuevoFamiliar({
     parentesco: 'HIJO/A',
     apellido: '',
@@ -223,15 +214,45 @@ const handleGuardarFamiliar = () => {
   });
 };
   useEffect(() => {
-  const cargarLegajo = async () => {
-    try {
-      if (usuNombre) {
-        const res = await axios.get(`http://localhost:3000/usuarios/${usuNombre}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+    let activo = true;
+    const urlsTemporales: string[] = [];
+
+    const cargarArchivo = async (idArchivo?: number | string) => {
+      if (!idArchivo) return '';
+      try {
+        const response = await api.get(`/archivos/${idArchivo}`, { responseType: 'blob' });
+        const url = URL.createObjectURL(response.data);
+        urlsTemporales.push(url);
+        return url;
+      } catch (error) {
+        console.error(`No se pudo recuperar el archivo ${idArchivo}:`, error);
+        if (activo) {
+          setMensaje({
+            tipo: 'error',
+            texto: 'NO SE PUDO RECUPERAR UNO DE LOS ARCHIVOS DEL LEGAJO. LOS DEMÁS DATOS SIGUEN DISPONIBLES.',
+          });
+        }
+        return '';
+      }
+    };
+
+    const cargarLegajo = async () => {
+      try {
+        if (usuNombre) {
+        const [res, funcionesRes] = await Promise.all([
+          api.get(`/usuarios/${usuNombre}`),
+          api.get('/usuarios/catalogos/funciones'),
+        ]);
+        if (!activo) return;
+        setFuncionesDisponibles(funcionesRes.data);
 
         if (res.data?.empleado) {
           const emp = res.data.empleado;
+          const [foto, cudArchivo] = await Promise.all([
+            cargarArchivo(emp.idArchivoFoto),
+            cargarArchivo(emp.cud?.idArchivoCud),
+          ]);
+          if (!activo) return;
           const rawFecha = emp.fechaNacimiento || emp.f_nacimiento;
           const fechaFormateada = rawFecha
             ? (typeof rawFecha === 'string' ? rawFecha : new Date(rawFecha).toISOString()).substring(0, 10)
@@ -245,7 +266,7 @@ const handleGuardarFamiliar = () => {
             legajo: emp.legajo || '',
             apellido: (emp.apellido || '').toUpperCase(),
             nombres: (emp.nombres || '').toUpperCase(),
-            tipoDocumento: 'DNI',
+            tipoDocumento: emp.tipoDocumento || 'DNI',
             nrodocumento: emp.nroDocumento || emp.nrodocumento || '',
             cuil: emp.cuil || '',
             fechaNacimiento: fechaFormateada,
@@ -266,12 +287,11 @@ const handleGuardarFamiliar = () => {
             estadoCivil: emp.estadoCivil || emp.estadocivil || '',
             reparticion: emp.reparticion || '',
             funcion: emp.funcion || '',
-            foto: emp.idArchivoFoto ? `http://localhost:3000/archivos/${emp.idArchivoFoto}` : '',
-            certificadoDiscapacidad: emp.cud ? 'SI' : 'NO',
+            foto,
             tieneCud: Boolean(emp.cud || emp.idCud),
             cudFechaEmision: emp.cud?.fechaEmision || emp.fechaEmisionCud || '',
             cudFechaVencimiento: emp.cud?.fechaVencimiento || emp.fechaVencimientoCud || '',
-            cudArchivo: emp.cud?.idArchivoCud ? `http://localhost:3000/archivos/${emp.cud.idArchivoCud}` : '',
+            cudArchivo,
             cudNombreArchivo: emp.cud?.nombreArchivoCud || '',
           };
 
@@ -281,14 +301,20 @@ const handleGuardarFamiliar = () => {
              numFamiliar: fam.numFamiliar || fam.numfamiliar,
              apellido: (fam.apellido || '').toUpperCase(),
              nombres: (fam.nombres || '').toUpperCase(),
+             tipoDocumento: fam.tipoDocumento || 'DNI',
+             nroDocumento: fam.nroDocumento || '',
+             sexo: fam.sexo || 'MASCULINO',
+             fechaNacimiento: fam.fechaNacimiento
+               ? String(fam.fechaNacimiento).substring(0, 10)
+               : '',
              parentesco: fam.parentesco || 'HIJO/A',
              discapacitado: Boolean(fam.discapacitado),
            }));
-                     setFamiliares(familiaresMapeados);
+             setFamiliares(familiaresMapeados);
+             setFamiliaresOriginales(familiaresMapeados);
 
        }
 
-          // Actualizamos tanto el formulario activo como el respaldo de "Cancelar"
           setDatosForm(datosCargados);
           setDatosOriginales(datosCargados);
 
@@ -296,13 +322,23 @@ const handleGuardarFamiliar = () => {
       }
     } catch (err) {
       console.warn('Cargando datos de referencia.', err);
+      if (activo) {
+        setMensaje({
+          tipo: 'error',
+          texto: 'NO SE PUDIERON RECUPERAR LOS DATOS DEL LEGAJO. VUELVA A INICIAR SESIÓN O INTENTE MÁS TARDE.',
+        });
+      }
     } finally {
-      setCargando(false);
+      if (activo) setCargando(false);
     }
   };
 
   cargarLegajo();
-}, [usuNombre, token]);
+  return () => {
+    activo = false;
+    urlsTemporales.forEach((url) => URL.revokeObjectURL(url));
+  };
+}, [usuNombre]);
 
   const handleCancelar = () => {
     setDatosForm(datosOriginales);
@@ -396,42 +432,153 @@ const handleGuardarFamiliar = () => {
     setGuardando(true);
     setMensaje(null);
 
-    // 1. OBTENER TOKEN VÁLIDO DIRECTAMENTE DE LOCALSTORAGE
+    const camposSolicitud: (keyof typeof datosForm)[] = [
+      'calle',
+      'callenro',
+      'barrio',
+      'ciudad',
+      'provincia',
+      'tel1',
+      'tel2',
+      'email',
+      'estadoCivil',
+      'reparticion',
+      'funcion',
+      'foto',
+    ];
+    const datosModificados: Record<string, unknown> = {};
+
+    for (const campo of camposSolicitud) {
+      if (datosForm[campo] !== datosOriginales[campo]) {
+        datosModificados[campo] = datosForm[campo];
+      }
+    }
+
+    const camposCud: (keyof typeof datosForm)[] = [
+      'tieneCud',
+      'cudFechaEmision',
+      'cudFechaVencimiento',
+      'cudArchivo',
+      'cudNombreArchivo',
+    ];
+    const cambioCud = camposCud.some((campo) => datosForm[campo] !== datosOriginales[campo]);
+
+    const familiaresModificados: Record<string, unknown>[] = [];
+    const familiaresAnteriores: Record<string, unknown>[] = [];
+    for (const familiar of familiares) {
+      if (!familiar.idFamiliar) {
+        familiaresModificados.push({
+          parentesco: familiar.parentesco,
+          apeNom: `${familiar.apellido} ${familiar.nombres}`.trim(),
+          apellido: familiar.apellido,
+          nombres: familiar.nombres,
+          tipoDocumento: familiar.tipoDocumento || 'DNI',
+          nroDocumento: familiar.nroDocumento || '',
+          sexo: familiar.sexo || 'MASCULINO',
+          fechaNacimiento: familiar.fechaNacimiento || '',
+          discapacitado: Boolean(familiar.discapacitado),
+          ...(familiar.archivoCud && {
+            archivoCud: familiar.archivoCud,
+            nombreArchivoCud: familiar.nombreArchivoCud || familiar.archivoCud.name,
+          }),
+          esNuevo: true,
+        });
+        continue;
+      }
+
+      const original = familiaresOriginales.find(
+        (familiarOriginal) => familiarOriginal.idFamiliar === familiar.idFamiliar,
+      );
+      if (!original) continue;
+
+      const cambios = Object.fromEntries(
+        camposFamiliaresComparables
+          .filter((campo) => familiar[campo] !== original[campo])
+          .map((campo) => [campo, familiar[campo]]),
+      );
+
+      if (Object.keys(cambios).length > 0) {
+        familiaresModificados.push({ idFamiliar: familiar.idFamiliar, ...cambios });
+        familiaresAnteriores.push({
+          idFamiliar: familiar.idFamiliar,
+          ...Object.fromEntries(
+            Object.keys(cambios).map((campo) => [campo, original[campo as keyof Familiar]]),
+          ),
+        });
+      }
+    }
+
+    const familiaresPresentes = new Set(
+      familiares.map((familiar) => familiar.idFamiliar).filter((id): id is number => Boolean(id)),
+    );
+    for (const familiar of familiaresOriginales) {
+      if (!familiar.idFamiliar || familiaresPresentes.has(familiar.idFamiliar)) continue;
+      familiaresModificados.push({ idFamiliar: familiar.idFamiliar, eliminado: true });
+      familiaresAnteriores.push({
+        idFamiliar: familiar.idFamiliar,
+        ...Object.fromEntries(
+          camposFamiliaresComparables.map((campo) => [campo, familiar[campo]]),
+        ),
+      });
+    }
+
+    if (Object.keys(datosModificados).length === 0 && !cambioCud && familiaresModificados.length === 0) {
+      setMensaje({ tipo: 'error', texto: 'NO HAY CAMBIOS PARA ENVIAR.' });
+      setGuardando(false);
+      return;
+    }
 
     const payload = {
-      calle: datosForm.calle || '',
-      callenro: datosForm.callenro || '',
-      barrio: datosForm.barrio || '',
-      ciudad: datosForm.ciudad || '',
-      provincia: datosForm.provincia || '',
-      tel1: datosForm.tel1 || '',
-      tel2: datosForm.tel2 || '',
-      email: datosForm.email || '',
-      estadoCivil: datosForm.estadoCivil,
-      reparticion: datosForm.reparticion,
-      funcion: datosForm.funcion,
-      foto: datosForm.foto || undefined,
-      cud: datosForm.tieneCud
-        ? {
-            fechaEmision: datosForm.cudFechaEmision,
-            fechaVencimiento: datosForm.cudFechaVencimiento,
-            archivo: datosForm.cudArchivo,
-            nombreArchivo: datosForm.cudNombreArchivo,
-          }
-        : null,
-      familiares: familiares.map((f) => ({
-        parentesco: f.parentesco,
-        apeNom: `${f.apellido} ${f.nombres}`.trim(),
-      })),
+      ...datosModificados,
+      valoresAnteriores: {
+        ...Object.fromEntries(
+          Object.keys(datosModificados).map((campo) => [
+            campo,
+            campo === 'foto'
+              ? (datosOriginales.foto ? 'Foto registrada' : 'Sin foto')
+              : datosOriginales[campo as keyof typeof datosOriginales],
+          ]),
+        ),
+        ...(cambioCud && {
+          cud: {
+            tieneCud: datosOriginales.tieneCud,
+            fechaEmision: datosOriginales.cudFechaEmision,
+            fechaVencimiento: datosOriginales.cudFechaVencimiento,
+            nombreArchivo: datosOriginales.cudNombreArchivo,
+            archivoPresente: Boolean(datosOriginales.cudArchivo),
+          },
+        }),
+        ...(familiaresAnteriores.length > 0 && {
+          familiares: familiaresAnteriores,
+        }),
+      },
+      ...(cambioCud && {
+        cud: datosForm.tieneCud
+          ? {
+              fechaEmision: datosForm.cudFechaEmision,
+              fechaVencimiento: datosForm.cudFechaVencimiento,
+              ...(datosForm.cudArchivo.startsWith('data:') && {
+                archivo: datosForm.cudArchivo,
+              }),
+              nombreArchivo: datosForm.cudNombreArchivo,
+            }
+          : null,
+      }),
+      ...(familiaresModificados.length > 0 && {
+        familiares: await Promise.all(familiaresModificados.map(async (familiar) => {
+          if (!(familiar.archivoCud instanceof File)) return familiar;
+
+          return {
+            ...familiar,
+            archivoCud: await convertirArchivoABase64(familiar.archivoCud),
+            nombreArchivoCud: familiar.nombreArchivoCud || familiar.archivoCud.name,
+          };
+        })),
+      }),
     };
 
-   try {
-      const authToken = localStorage.getItem('token');
-      console.log('TOKEN ENVIADO:', authToken); // 👈 AGREGÁ ESTA LÍNEA
-
-      await axios.post('http://localhost:3000/solicitudes', payload, {
-        headers: { Authorization: `Bearer ${authToken}` },
-      });
+    try {
+      await api.post('/solicitudes', payload);
       setMensaje({ tipo: 'exito', texto: 'SOLICITUD ENVIADA CORRECTAMENTE. EN ESTADO PENDIENTE DE REVISION.' });
       setDatosOriginales(datosForm);
       setFamiliaresOriginales(familiares);
@@ -453,120 +600,38 @@ const handleGuardarFamiliar = () => {
   }
 
   return (
-    <div style={pageContainerStyle}>
-      <style>{`
-       button {
-         transition: all 0.2s ease !important;
-       }
-       button:hover {
-        background-color: #162214 !important;
-        border-color: #2e5a1c !important;
-        color: #52b72a !important;
-      }
-       button:hover svg {
-       stroke: #52b72a !important;
-      }
-`} </style>
-
-      <div style={cardStyle}>
-       {/* NAVBAR SUPERIOR INSTITUCIONAL */}
-<header style={{
-  width: '100%',
-  backgroundColor: '#1a1a1a',
-  borderBottom: '1px solid #2a2a2a',
-  padding: '12px 24px',
-  boxSizing: 'border-box',
-  display: 'flex',
-  justifyContent: 'space-between',
-  alignItems: 'center',
-  marginBottom: '28px',
-}}>
-  {/* LADO IZQUIERDO: LOGO Y TÍTULOS */}
-  <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-    <img 
-      src={logoConcordia} 
-      alt="Municipalidad de oncordia" 
-      style={{ 
-        height: '40px', 
-        width: 'auto', 
-        objectFit: 'contain',
-        mixBlendMode: 'screen',
-      }} 
-    />
-    <div style={{ borderLeft: '1px solid #333333', paddingLeft: '14px' }}>
-      <div style={{ fontSize: '13px', fontWeight: 700, color: '#f3f4f6', letterSpacing: '0.04em' }}>
-        SISTEMA DE LEGAJO ÚNICO
-      </div>
-    </div>
-  </div>
-
-  {/* LADO DERECHO: ACCESO A SOLICITUDES Y CERRAR SESIÓN */}
-  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-    {/* RETORNO AL PANEL SI ES ADMIN */}
-    {esAdmin && (
-      <button
-        type="button"
-        onClick={() => navigate('/admin/solicitudes')}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '6px',
-          backgroundColor: '#14532d',
-          color: '#86efac',
-          border: '1px solid #22c55e',
-          borderRadius: '6px',
-          padding: '7px 12px',
-          fontSize: '13px',
-          fontWeight: 600,
-          cursor: 'pointer',
-        }}
-      >
-        ← Solicitudes
-      </button>
-    )}
-
-    <button
-      type="button"
-      onClick={() => navigate('/solicitudes')}
-      style={{
-        backgroundColor: '#262626',
-        color: '#d1d5db',
-        border: '1px solid #3f3f46',
-        borderRadius: '6px',
-        padding: '7px 12px',
-        fontSize: '13px',
-        cursor: 'pointer',
-      }}
-    >
-      Mis Solicitudes
-    </button>
-
-    <button
-      type="button"
-      onClick={handleLogout}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '8px',
-        backgroundColor: '#262626',
-        color: '#f87171',
-        border: '1px solid #3f3f46',
-        borderRadius: '6px',
-        padding: '7px 14px',
-        fontSize: '13px',
-        fontWeight: 600,
-        cursor: 'pointer',
-      }}
-    >
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-        <polyline points="16 17 21 12 16 7"></polyline>
-        <line x1="21" y1="12" x2="9" y2="12"></line>
-      </svg>
-      Cerrar sesión
-    </button>
-  </div>
-</header>
+    <div className="perfil-usuario-page" style={pageContainerStyle}>
+      <div className="perfil-usuario-card" style={cardStyle}>
+        <EncabezadoInstitucional
+          className="institutional-header--spaced"
+          acciones={
+            <>
+              {esAdmin && (
+                <button
+                  type="button"
+                  className="institutional-header-action"
+                  onClick={() => navigate('/admin/solicitudes')}
+                >
+                  ← Solicitudes
+                </button>
+              )}
+              <button
+                type="button"
+                className="institutional-header-action"
+                onClick={() => navigate('/solicitudes')}
+              >
+                Mis Solicitudes
+              </button>
+              <button
+                type="button"
+                className="institutional-header-action institutional-header-action--logout"
+                onClick={handleLogout}
+              >
+                Cerrar sesión
+              </button>
+            </>
+          }
+        />
 
 
         {/* ENCABEZADO INSTITUCIONAL */}
@@ -905,7 +970,6 @@ const handleGuardarFamiliar = () => {
                 CERTIFICADO ÚNICO DE DISCAPACIDAD
               </span>
 
-              {/* Pregunta SI / NO */}
               <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 2fr', gap: '16px', alignItems: 'center' }}>
                 <div>
                   <label style={labelStyle}>¿POSEE CERTIFICADO ÚNICO DE DISCAPACIDAD?</label>
@@ -917,7 +981,6 @@ const handleGuardarFamiliar = () => {
                         setDatosForm({
                           ...datosForm,
                           tieneCud: posee,
-                          // Si cambia a NO, limpiamos los datos del CUD
                           cudFechaEmision: posee ? datosForm.cudFechaEmision : '',
                           cudFechaVencimiento: posee ? datosForm.cudFechaVencimiento : '',
                           cudArchivo: posee ? datosForm.cudArchivo : '',
@@ -944,7 +1007,6 @@ const handleGuardarFamiliar = () => {
                   )}
                 </div>
 
-                {/* Si no tiene CUD, mensaje informativo compacto */}
                 {!datosForm.tieneCud && (
                   <p style={{ fontSize: '12px', color: '#71717a', margin: 0, paddingTop: '16px' }}>
                     No posee registro de CUD declarado actualmente.
@@ -952,7 +1014,6 @@ const handleGuardarFamiliar = () => {
                 )}
               </div>
 
-              {/* CAMPOS QUE SE ABREN SI PUSO 'SI' */}
               {datosForm.tieneCud && (
                 <div style={{
                   display: 'grid',
@@ -962,7 +1023,6 @@ const handleGuardarFamiliar = () => {
                   paddingTop: '14px',
                   borderTop: '1px dashed #27272a'
                 }}>
-                  {/* Fecha de Emisión */}
                   <div>
                     <label style={labelStyle}>FECHA DE EMISIÓN</label>
                     <input
@@ -974,7 +1034,6 @@ const handleGuardarFamiliar = () => {
                     />
                   </div>
 
-                  {/* Fecha de Vencimiento */}
                   <div>
                     <label style={labelStyle}>FECHA DE VENCIMIENTO</label>
                     <input
@@ -986,7 +1045,6 @@ const handleGuardarFamiliar = () => {
                     />
                   </div>
 
-                  {/* Subir foto / archivo del CUD */}
                   <div>
                     <label style={labelStyle}>FOTO / CONSTANCIA DEL CUD (PDF O IMAGEN)</label>
                     {modoEdicion ? (
@@ -1100,7 +1158,6 @@ const handleGuardarFamiliar = () => {
               </span>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '14px', marginTop: '4px' }}>
-                {/* Repartición */}
                 <div>
                   <label style={labelStyle}>REPARTICIÓN ASIGNADA</label>
                   <input
@@ -1109,8 +1166,10 @@ const handleGuardarFamiliar = () => {
                     disabled={!modoEdicion}
                     onChange={(e) => setDatosForm({ ...datosForm, reparticion: e.target.value.toUpperCase() })}
                     style={modoEdicion ? inputEditableStyle : inputReadOnlyStyle}
-                    placeholder="Ej: OBRAS PUBLICAS"
+                    maxLength={150}
+                    placeholder="Escribí la repartición propuesta"
                   />
+                  <small style={{ color: '#a1a1aa' }}>Escribí la propuesta; solo se guardará si administración aprueba la solicitud.</small>
                 </div>
 
                 <div>
@@ -1127,9 +1186,9 @@ const handleGuardarFamiliar = () => {
                       }}
                     >
                       <option value="">-- SELECCIONE UNA FUNCIÓN --</option>
-                      {FUNCIONES_DISPONIBLES.map((func) => (
-                        <option key={func} value={func}>
-                          {func}
+                      {funcionesDisponibles.map((func) => (
+                        <option key={func.idfuncion} value={func.funcion}>
+                          {func.funcion}
                         </option>
                       ))}
                     </select>
@@ -1143,7 +1202,6 @@ const handleGuardarFamiliar = () => {
                   )}
                 </div>
 
-                {/* Estado Civil */}
                 <div>
                   <label style={labelStyle}>ESTADO CIVIL</label>
                   <input
@@ -1187,7 +1245,6 @@ const handleGuardarFamiliar = () => {
                       {modoEdicion && (
                         <td style={{ textAlign: 'right' }}>
   <div style={{ display: 'inline-flex', gap: '14px', alignItems: 'center' }}>
-    {/* 1. Botón Editar */}
     <button
       type="button"
       onClick={() => handleEditarFamiliar(idx)}
@@ -1205,7 +1262,6 @@ const handleGuardarFamiliar = () => {
       EDITAR
     </button>
 
-    {/* 2. Botón Quitar que ya tenías */}
     <button
       type="button"
       onClick={() => handleEliminarFamiliar(idx)}
@@ -1238,7 +1294,6 @@ const handleGuardarFamiliar = () => {
               </table>
             </div>
 
-     {/* BOTÓN PARA ABRIR EL MODAL */}
          {modoEdicion && (
         <div style={{ marginTop: '12px' }}>
         <button
@@ -1366,7 +1421,6 @@ const handleGuardarFamiliar = () => {
                 </select>
               </div>
 
-              {/* CHECKBOX CUD */}
 <div style={{ gridColumn: 'span 2', marginTop: '6px' }}>
   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
     <input
@@ -1388,7 +1442,6 @@ const handleGuardarFamiliar = () => {
     </label>
   </div>
 
-  {/* SUBIR CUD (SOLO SE MUESTRA SI ESTÁ TILDADO) */}
   {nuevoFamiliar.discapacitado && (
     <div style={{
       marginTop: '10px',
@@ -1405,11 +1458,26 @@ const handleGuardarFamiliar = () => {
         accept=".pdf,.png,.jpg,.jpeg"
         onChange={(e) => {
           const file = e.target.files?.[0] || null;
-          setNuevoFamiliar({
-            ...nuevoFamiliar,
+          if (!file) return;
+
+          const extension = file.name.split('.').pop()?.toLowerCase();
+          const extensionesValidas = ['pdf', 'jpg', 'jpeg', 'png'];
+          if (!extension || !extensionesValidas.includes(extension)) {
+            alert('El CUD debe ser un archivo PDF o imagen (JPG, PNG).');
+            e.target.value = '';
+            return;
+          }
+          if (file.size > 5 * 1024 * 1024) {
+            alert('El archivo no debe superar los 5 MB.');
+            e.target.value = '';
+            return;
+          }
+
+          setNuevoFamiliar((prev) => ({
+            ...prev,
             archivoCud: file,
-            nombreArchivoCud: file ? file.name : '',
-          });
+            nombreArchivoCud: file.name,
+          }));
         }}
              style={{
               width: '100%',
@@ -1467,7 +1535,6 @@ const handleGuardarFamiliar = () => {
   
 </div>
 
-      {/* BOTONERA FINAL DE GUARDADO */}
           {modoEdicion && (
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', borderTop: '1px solid #282828', paddingTop: '20px' }}>
               <button
@@ -1496,7 +1563,7 @@ const pageContainerStyle: React.CSSProperties = {
   backgroundColor: '#0d0d0d',
   minHeight: '100vh',
   width: '100%',
-  padding: '30px 20px',             
+  padding: 0,
   justifyContent: 'center',        
   boxSizing: 'border-box',
   fontFamily: 'Segoe UI, sans-serif',
@@ -1507,7 +1574,7 @@ const cardStyle: React.CSSProperties = {
   border: '1px solid #27272a',
   borderRadius: '10px',
   width: '100%',
-  maxWidth: '1150px',               
+  maxWidth: '1150px',
   padding: '32px 36px',             
   boxSizing: 'border-box',
 };

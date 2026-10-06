@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { authService } from '../services/auth.service';
-import { Link, useNavigate } from 'react-router-dom';
-import logoConcordia from '../assets/logo2.png';
+import { useNavigate } from 'react-router-dom';
+import { EncabezadoInstitucional } from '../componentes/EncabezadoInstitucional';
 
 export const Login: React.FC = () => {
   const [usuNombre, setUsuNombre] = useState('');
@@ -22,7 +22,6 @@ export const Login: React.FC = () => {
 
       const token = res?.access_token;
       if (token) {
-        localStorage.setItem('token', token);
         localStorage.setItem('usuNombre', usuNombre);
 
         // Accedemos directo a res.usuario.idRol
@@ -56,30 +55,11 @@ export const Login: React.FC = () => {
     };
 
   return (
-    <div style={containerStyle}>
-      <div style={cardStyle}>
-    {/* CABECERA INSTITUCIONAL */}
+    <div className="auth-page" style={containerStyle}>
+      <EncabezadoInstitucional />
+      <main className="auth-page-content">
+      <div className="auth-page-card" style={cardStyle}>
         <div style={{ textAlign: 'center', marginBottom: '28px' }}>
-          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '14px', marginBottom: '14px' }}>
-            {/* Ícono con contenedor circular blanco sutil para que no se trasluzca */}
-            <div >
-              <img
-                 src={logoConcordia}
-                 alt="Municipalidad de Concordia"
-                 style={{
-                 height: '52px',
-                 width: 'auto',
-                 maxWidth: '260px',
-                 objectFit: 'contain',
-                 mixBlendMode: 'screen',
-                 }}
-              />
-
-            </div>
-
-           
-          </div>
-
           <h3 style={{ margin: 0, fontSize: '12px', color: '#94a3b8', fontWeight: 600, letterSpacing: '0.08em' }}>
             INGRESO AL SISTEMA DE LEGAJO
           </h3>
@@ -150,11 +130,6 @@ export const Login: React.FC = () => {
             </div>
           </div>
 
-          <div style={{ textAlign: 'right', marginTop: '-4px' }}>
-            <Link to="/recuperar-password" style={linkStyle}>
-              ¿Olvidaste tu contraseña?
-            </Link>
-          </div>
 
           {/* BOTONERA INFERIOR */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginTop: '10px' }}>
@@ -190,21 +165,18 @@ export const Login: React.FC = () => {
 
         </form>
       </div>
+      </main>
     </div>
   );
 };
 
-// ESTILOS TIPO MUNICIPALIDAD DE CONCORDIA (DARK + GREEN + ACCENTS)
+// ESTILOS
 const containerStyle: React.CSSProperties = {
   minHeight: '100vh',
   display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
+  flexDirection: 'column',
   backgroundColor: '#121212',
-  backgroundImage: 'radial-gradient(#1f1f1f 1px, transparent 1px)',
-  backgroundSize: '20px 20px',
   fontFamily: 'Segoe UI, Helvetica, Arial, sans-serif',
-  padding: '1rem',
   boxSizing: 'border-box',
 };
 
@@ -258,12 +230,6 @@ const togglePasswordButtonStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-};
-
-const linkStyle: React.CSSProperties = {
-  color: '#9e9e9e',
-  fontSize: '12px',
-  textDecoration: 'none',
 };
 
 const btnLimpiarStyle: React.CSSProperties = {

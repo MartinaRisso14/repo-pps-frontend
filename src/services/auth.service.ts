@@ -17,24 +17,18 @@ export const authService = {
     const { data } = await api.post<LoginResponse>('/auth/login', { usuNombre, password });
     if (data.access_token) {
       localStorage.setItem('access_token', data.access_token);
+      localStorage.removeItem('token');
       localStorage.setItem('usuario', JSON.stringify(data.usuario));
     }
     return data;
   },
 
-  solicitarRecuperacion: async (email: string) => {
-    const { data } = await api.post('/auth/recuperar-password', { email });
-    return data;
-  },
-
-  resetPassword: async (token: string, nuevaPassword: string) => {
-    const { data } = await api.post('/auth/reset-password', { token, nuevaPassword });
-    return data;
-  },
-
   logout: () => {
     localStorage.removeItem('access_token');
+    localStorage.removeItem('token');
     localStorage.removeItem('usuario');
+    localStorage.removeItem('usuNombre');
+    localStorage.removeItem('idRol');
   },
 
   getUsuarioActual: () => {
@@ -42,4 +36,3 @@ export const authService = {
     return userStr ? JSON.parse(userStr) : null;
   },
 };
-
