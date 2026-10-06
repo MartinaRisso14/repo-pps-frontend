@@ -10,11 +10,13 @@ interface SolicitudAdmin {
   nroSolicitud: string;
   legajo: string;
   agente: string;
+  apellidoEmpleado?: string;
+  nombresEmpleado?: string;
   campo: string;
   valorAnterior: string;
   valorSolicitado: string;
   fecha: string;
-  estado: 'PENDIENTE' | 'APROBADA' | 'RECHAZADA';
+  estado: 'PENDIENTE' | 'APROBADA' | 'RECHAZADA' | 'CANCELADA';
   observaciones?: string;
   datosSolicitados: Record<string, any>;
   cambios: { campo: string; anterior: string; solicitado: string }[];
@@ -35,6 +37,13 @@ const etiquetasCampos: Record<string, string> = {
   certificadoDiscapacidad: 'CERTIFICADO DE DISCAPACIDAD',
   nacionalidad: 'NACIONALIDAD',
   apeNom: 'NOMBRE',
+};
+
+const coloresEstado: Record<string, { fondo: string; texto: string }> = {
+  PENDIENTE: { fondo: '#78350f', texto: '#fde047' },
+  APROBADA: { fondo: '#14532d', texto: '#86efac' },
+  RECHAZADA: { fondo: '#7f1d1d', texto: '#fca5a5' },
+  CANCELADA: { fondo: '#1f2937', texto: '#9ca3af' },
 };
 
 const mostrarValor = (valor: unknown): string => {
@@ -188,6 +197,56 @@ const obtenerArchivoSolicitud = (
   };
 };
 
+// Chrome bloquea abrir URLs data:... en una pestaña nueva, así que se convierten a blob:
+const AdjuntoSolicitud: React.FC<{
+  archivo: ArchivoSolicitud;
+  etiqueta: string;
+  previsualizar?: boolean;
+}> = ({ archivo, etiqueta, previsualizar = true }) => {
+  const esDataUrl = archivo.url.startsWith('data:');
+  const [url, setUrl] = useState<string | null>(esDataUrl ? null : archivo.url);
+
+  useEffect(() => {
+    if (!esDataUrl) return;
+    let objetoUrl: string | null = null;
+    let cancelado = false;
+
+    fetch(archivo.url)
+      .then((respuesta) => respuesta.blob())
+      .then((blob) => {
+        if (cancelado) return;
+        objetoUrl = URL.createObjectURL(blob);
+        setUrl(objetoUrl);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelado = true;
+      if (objetoUrl) URL.revokeObjectURL(objetoUrl);
+    };
+  }, [archivo.url, esDataUrl]);
+
+  const urlVista = archivo.tipo === 'imagen' && esDataUrl ? archivo.url : url;
+
+  return (
+    <div className="solicitudes-admin-adjunto">
+      {previsualizar && urlVista && archivo.tipo === 'imagen' && (
+        <img className="solicitudes-admin-adjunto-vista" src={urlVista} alt={archivo.nombre} />
+      )}
+      {previsualizar && url && archivo.tipo === 'documento' && (
+        <iframe
+          className="solicitudes-admin-adjunto-vista solicitudes-admin-adjunto-pdf"
+          src={url}
+          title={archivo.nombre}
+        />
+      )}
+      <a href={url ?? archivo.url} target="_blank" rel="noreferrer">
+        {etiqueta} · {archivo.nombre}
+      </a>
+    </div>
+  );
+};
+
 const formatearFechaSolicitud = (fecha?: string | Date | null) => {
   if (!fecha) return '';
 
@@ -276,6 +335,8 @@ const cerrarModal = () => {
           nroSolicitud: `SOL-2026-${String(s.id).padStart(5, '0')}`,
           legajo: String(s.legajo ?? ds.legajo ?? 'S/L'),
           agente: s.agente || ds.apenom || `Usuario #${s.usuCodigo ?? s.usucodigo}`,
+          apellidoEmpleado: s.apellidoEmpleado || '',
+          nombresEmpleado: s.nombresEmpleado || '',
           campo: cambios.length > 1 ? `${cambios.length} CAMBIOS` : cambios[0]?.campo || campoDetectado,
           valorAnterior: cambios[0]?.anterior || 'No guardado en esta solicitud',
           valorSolicitado: cambios[0]?.solicitado || valorNuevo,
@@ -352,11 +413,19 @@ useEffect(() => {
   const solicitudesFiltradas = solicitudes.filter((s: any) => {
     const matchEstado = filtroEstado === 'TODAS' || s.estado === filtroEstado;
     const nro = String(s.nroSolicitud || `#${s.id}`).toLowerCase();
-    const legajo = String(s.legajo || s.datosSolicitados?.legajo || '');
+    const legajo = String(s.legajo || s.datosSolicitados?.legajo || '').toLowerCase();
     const agente = String(s.agente || s.apenom || '').toLowerCase();
+    const apellido = String(s.apellidoEmpleado || '').toLowerCase();
+    const nombres = String(s.nombresEmpleado || '').toLowerCase();
     const term = busqueda.toLowerCase();
 
-    return matchEstado && (nro.includes(term) || legajo.includes(term) || agente.includes(term));
+    return matchEstado && (
+      nro.includes(term)
+      || legajo.includes(term)
+      || agente.includes(term)
+      || apellido.includes(term)
+      || nombres.includes(term)
+    );
   });
 
   const datosSolicitudSeleccionada = solicitudSeleccionada?.datosSolicitados || {};
@@ -428,7 +497,7 @@ useEffect(() => {
           />
 
           <div className="solicitudes-admin-filters">
-            {['TODAS', 'PENDIENTE', 'APROBADA', 'RECHAZADA'].map((estado) => (
+            {['TODAS', 'PENDIENTE', 'APROBADA', 'RECHAZADA', 'CANCELADA'].map((estado) => (
               <button
                 key={estado}
                 onClick={() => setFiltroEstado(estado)}
@@ -480,8 +549,8 @@ useEffect(() => {
                     fontWeight: 700,
                     padding: '2px 6px',
                     borderRadius: '4px',
-                    backgroundColor: s.estado === 'PENDIENTE' ? '#78350f' : s.estado === 'APROBADA' ? '#14532d' : '#7f1d1d',
-                    color: s.estado === 'PENDIENTE' ? '#fde047' : s.estado === 'APROBADA' ? '#86efac' : '#fca5a5',
+                    backgroundColor: coloresEstado[s.estado]?.fondo ?? '#1f2937',
+                    color: coloresEstado[s.estado]?.texto ?? '#9ca3af',
                   }}>
                     {s.estado}
                   </span>
@@ -547,26 +616,20 @@ useEffect(() => {
                 <div>
                   <span className="solicitudes-admin-block-title">ARCHIVOS DE LA SOLICITUD</span>
                   {archivoCud || fotoSolicitud || archivosCudFamiliares.length > 0 ? (
-                    <div className="solicitudes-admin-file-links">
+                    <div className="solicitudes-admin-adjuntos">
                       {archivoCud && (
-                        <a href={archivoCud.url} target="_blank" rel="noreferrer">
-                          Ver certificado CUD · {archivoCud.nombre}
-                        </a>
+                        <AdjuntoSolicitud archivo={archivoCud} etiqueta="Ver certificado CUD" />
                       )}
                       {fotoSolicitud && (
-                        <a href={fotoSolicitud.url} target="_blank" rel="noreferrer">
-                          Ver foto adjunta · {fotoSolicitud.nombre}
-                        </a>
+                        <AdjuntoSolicitud archivo={fotoSolicitud} etiqueta="Ver foto adjunta" />
                       )}
                       {archivosCudFamiliares.map((item: { familiar: string; archivo: ArchivoSolicitud | null }, indice: number) => item.archivo && (
-                        <a
+                        <AdjuntoSolicitud
                           key={`${item.familiar}-${indice}`}
-                          href={item.archivo.url}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          Ver CUD de {item.familiar} · {item.archivo.nombre}
-                        </a>
+                          archivo={item.archivo}
+                          etiqueta={`Ver CUD de ${item.familiar}`}
+                          previsualizar={false}
+                        />
                       ))}
                     </div>
                   ) : (

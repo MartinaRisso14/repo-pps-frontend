@@ -239,6 +239,12 @@
   color: #fca5a5;
 }
 
+.solicitudes-admin-status.status-cancelada {
+  border-color: #4b5563;
+  background: rgba(75, 85, 99, 0.3);
+  color: #9ca3af;
+}
+
 .solicitudes-admin-change,
 .solicitudes-admin-family,
 .solicitudes-admin-final-resolution {
@@ -374,7 +380,36 @@
   margin-top: 10px;
 }
 
-.solicitudes-admin-file-links a {
+.solicitudes-admin-adjuntos {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.solicitudes-admin-adjunto {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.solicitudes-admin-adjunto-vista {
+  width: 100%;
+  max-height: 400px;
+  border: 1px solid #2b2b30;
+  border-radius: 6px;
+  background: #0b0b0c;
+  object-fit: contain;
+}
+
+.solicitudes-admin-adjunto-pdf {
+  height: 420px;
+  max-height: none;
+}
+
+.solicitudes-admin-file-links a,
+.solicitudes-admin-adjunto a {
   display: inline-flex;
   align-items: center;
   min-height: 34px;
@@ -390,7 +425,8 @@
   overflow-wrap: anywhere;
 }
 
-.solicitudes-admin-file-links a:hover {
+.solicitudes-admin-file-links a:hover,
+.solicitudes-admin-adjunto a:hover {
   border-color: #2e5a1c;
   background: #162214;
   color: #86efac;
