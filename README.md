@@ -4,6 +4,10 @@ Interfaz web construida con React, TypeScript y Vite para consultar legajos, env
 
 La documentación funcional integral está en [`DOCUMENTACION.md`](./DOCUMENTACION.md).
 
-## Despliegue
+## Despliegue en Railway
 
-Publicar como aplicación estática Vite. Comando de build: `npm ci && npm run build`; directorio de salida: `dist`. Definir `VITE_API_URL` con la URL HTTPS pública del backend antes de compilar. Cargar `VITE_API_URL` como variable de entorno del proveedor; no incluir secretos en el frontend. Configurar el fallback de rutas SPA para que las rutas de React Router se sirvan desde `index.html`.
+Crear un servicio Node desde este repositorio. Railway detecta el comando `npm run build` y arranca el frontend con `npm start`; el servidor estático incluido sirve `dist`, admite las rutas SPA y escucha en `PORT`.
+
+En Variables del servicio, definir `VITE_API_URL` como `https://${{ backend.RAILWAY_PUBLIC_DOMAIN }}`, cambiando `backend` por el nombre asignado al servicio de API. El servidor entrega esta URL en tiempo de ejecución, así que se puede desplegar el frontend antes de generar el dominio público de la API y no hace falta reconstruirlo para cambiarla. No poner secretos en el frontend.
+
+El servicio de API debe permitir el origen exacto del dominio público del frontend mediante `CORS_ORIGINS=https://${{ frontend.RAILWAY_PUBLIC_DOMAIN }}`, cambiando `frontend` por el nombre del servicio correspondiente.
