@@ -180,7 +180,7 @@ Este resumen ayuda a integrar el frontend actual, pero no sustituye un contrato 
 
 ## 8. Persistencia y datos
 
-La aplicación usa PostgreSQL con TypeORM. `synchronize` está deshabilitado: el backend presupone que el esquema requerido ya existe y no crea/actualiza tablas automáticamente al iniciar. El backend incluye la migración versionada `database/migrations/20261006_add_employees_document_type.sql`; debe aplicarse antes de desplegar la versión que consulta `empleados.tipodocumento`.
+La aplicación usa PostgreSQL con TypeORM. `synchronize` está deshabilitado: el backend presupone que el esquema requerido ya existe y no crea/actualiza tablas automáticamente al iniciar. Las migraciones versionadas de `database/migrations/` agregan el tipo de documento, cargan funciones y preparan la secuencia e índice de reparticiones. `database/bootstrap/demo-schema.sql` crea únicamente la estructura vacía derivada del esquema local para una base de demostración; no contiene datos de personas.
 
 El código consulta o actualiza las siguientes tablas del esquema `public`:
 
@@ -189,9 +189,13 @@ El código consulta o actualiza las siguientes tablas del esquema `public`:
 - `empleados`
 - `direcciones`
 - `familiares`
+- `archivos`
+- `emp_cud`
+- `funciones`
+- `reparticiones`
 - `solicitudes_modificacion`
 
-La entidad `SolicitudModificacion` guarda `datosSolicitados` como `jsonb`, además de estado y datos de envío/revisión. El servicio usa SQL directo en algunas consultas y operaciones; por eso depende de los nombres de tablas y columnas del esquema existente. La migración disponible solo agrega el tipo de documento; no sustituye una herramienta general de migraciones del esquema.
+La entidad `SolicitudModificacion` guarda `datosSolicitados` como `jsonb`, además de estado y datos de envío/revisión. El servicio usa SQL directo en algunas consultas y operaciones; por eso depende de los nombres de tablas y columnas del esquema existente. El bootstrap de demostración no debe usarse para crear o reemplazar el esquema institucional.
 
 La numeración de familiares usa `MAX(numfamiliar) + 1` por legajo. Dos aprobaciones concurrentes sobre el mismo legajo podrían competir por el mismo siguiente valor si la base no lo protege con una restricción o bloqueo adecuado; conviene resolver esa condición antes de operaciones concurrentes.
 
