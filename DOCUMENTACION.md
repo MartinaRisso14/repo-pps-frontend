@@ -197,6 +197,24 @@ El código consulta o actualiza las siguientes tablas del esquema `public`:
 
 La entidad `SolicitudModificacion` guarda `datosSolicitados` como `jsonb`, además de estado y datos de envío/revisión. El servicio usa SQL directo en algunas consultas y operaciones; por eso depende de los nombres de tablas y columnas del esquema existente. El bootstrap de demostración no debe usarse para crear o reemplazar el esquema institucional.
 
+El DER actualizado está en [`database/DIAGRAMA_ENTIDAD_RELACION.md`](../PPS-Repo-backend/database/DIAGRAMA_ENTIDAD_RELACION.md). El diagrama original de la práctica se conserva como referencia; el actualizado es un complemento basado en el esquema local de la aplicación.
+
+### Diferencias respecto del DER recibido
+
+El siguiente cuadro resume las extensiones y decisiones que conviene tener en cuenta al comparar el DER de la implementación con el diagrama original de la práctica:
+
+| Elemento | Implementación |
+|---|---|
+| `solicitudes_modificacion` | Tabla agregada para conservar las propuestas, su estado, las fechas y el motivo de rechazo. Se relaciona con `usuarios` por `usucodigo` (solicitante) y por `revisado_por` (revisor opcional). Los cambios se aplican a las tablas del legajo únicamente al aprobar. |
+| `empleados.tipodocumento` | Campo agregado para persistir el tipo de documento del agente. Los registros existentes del esquema local reciben `DNI` como valor predeterminado. |
+| `familiares.tipodocumento`, `nrodocumento`, `sexo` y `f_nacimiento` | Campos presentes en el esquema local para registrar esos datos de cada familiar; no aparecen en el DER recibido. `tipodocumento` tiene `DNI` como valor predeterminado. |
+| `usuarios.password_hash` y `usuarios.debe_cambiar_password` | Columnas presentes en el esquema local usado por la implementación, pero no mostradas en el DER recibido. El login local comprueba el hash. Falta confirmar si este mecanismo coincide con la administración de usuarios del sistema institucional. |
+| Adjuntos de familiares | No existe una relación permanente entre `familiares` y `archivos` en el esquema recibido ni en el implementado. Un CUD familiar adjunto queda dentro de los datos JSONB de la solicitud y su historial. |
+| Estados y control de cambios | Las tablas conservan columnas como `estado`, `fechamod` y `usuariomod` según el esquema local. No todas esas columnas tienen claves foráneas de auditoría declaradas en PostgreSQL. |
+| Reparticiones | Hay un índice único sobre `LOWER(TRIM(nombre))` para evitar duplicados por mayúsculas o espacios. Es una regla de unicidad, no una tabla o relación adicional. |
+
+Las relaciones del DER actualizado reflejan las claves foráneas declaradas en el esquema local de demostración. Algunas claves foráneas admiten `NULL`. Este esquema es una referencia de la implementación, no reemplaza ni certifica el esquema institucional.
+
 La numeración de familiares usa `MAX(numfamiliar) + 1` por legajo. Dos aprobaciones concurrentes sobre el mismo legajo podrían competir por el mismo siguiente valor si la base no lo protege con una restricción o bloqueo adecuado; conviene resolver esa condición antes de operaciones concurrentes.
 
 ## 9. Tema y encabezado institucional
