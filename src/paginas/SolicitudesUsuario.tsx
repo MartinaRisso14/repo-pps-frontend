@@ -11,7 +11,7 @@ interface Solicitud {
   id: number;
   usuCodigo: number;
   datosSolicitados: Record<string, any>;
-  estado: 'PENDIENTE' | 'APROBADA' | 'RECHAZADA';
+  estado: 'PENDIENTE' | 'APROBADA' | 'RECHAZADA' | 'CANCELADA';
   fechaCreacion: string;
   fechaRevision?: string | null;
   revisadoPor?: string | null;
@@ -252,6 +252,30 @@ export const SolicitudesUsuario: React.FC = () => {
     window.open(blobUrl, '_blank');
   };
 
+  const handleCancelarSolicitud = async (sol: Solicitud) => {
+    const confirmar = window.confirm(
+      `¿Cancelar la solicitud #${sol.id}? Podrás iniciar un nuevo trámite cuando quieras.`,
+    );
+    if (!confirmar) return;
+
+    try {
+      const res = await api.delete(`/solicitudes/${sol.id}/cancelar`);
+      if (res.data && res.data.estado === 'CANCELADA') {
+        setSolicitudes((prev) =>
+          prev.map((s) =>
+            s.id === sol.id
+              ? { ...s, estado: 'CANCELADA' as Solicitud['estado'], fechaRevision: res.data.fechaRevision }
+              : s,
+          ),
+        );
+        setSolicitudSeleccionada(null);
+      }
+    } catch (err) {
+      const mensaje = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      alert(mensaje || 'No se pudo cancelar la solicitud.');
+    }
+  };
+
   const getBadgeEstado = (estado: Solicitud['estado']) => {
     switch (estado) {
       case 'PENDIENTE':
@@ -260,6 +284,8 @@ export const SolicitudesUsuario: React.FC = () => {
         return { bg: 'rgba(79, 184, 34, 0.15)', color: '#4fb822', border: '#4fb822' };
       case 'RECHAZADA':
         return { bg: 'rgba(239, 68, 68, 0.15)', color: '#f87171', border: '#ef4444' };
+      case 'CANCELADA':
+        return { bg: 'rgba(107, 114, 128, 0.15)', color: '#9ca3af', border: '#6b7280' };
       default:
         return { bg: '#333', color: '#fff', border: '#555' };
     }
@@ -270,6 +296,7 @@ export const SolicitudesUsuario: React.FC = () => {
     { etiqueta: 'Pendientes', cantidad: solicitudes.filter((sol) => sol.estado === 'PENDIENTE').length, color: '#facc15' },
     { etiqueta: 'Aprobadas', cantidad: solicitudes.filter((sol) => sol.estado === 'APROBADA').length, color: '#4fb822' },
     { etiqueta: 'Rechazadas', cantidad: solicitudes.filter((sol) => sol.estado === 'RECHAZADA').length, color: '#f87171' },
+    { etiqueta: 'Canceladas', cantidad: solicitudes.filter((sol) => sol.estado === 'CANCELADA').length, color: '#9ca3af' },
   ];
 
   if (cargando) {
@@ -416,7 +443,11 @@ export const SolicitudesUsuario: React.FC = () => {
                 </div>
                 {solicitudSeleccionada.fechaRevision && (
                   <div style={{ fontSize: '12px', color: '#9ca3af' }}>
-                    {solicitudSeleccionada.estado === 'RECHAZADA' ? 'RECHAZADA' : 'REVISADA'} EL{' '}
+                    {solicitudSeleccionada.estado === 'RECHAZADA'
+                      ? 'RECHAZADA'
+                      : solicitudSeleccionada.estado === 'CANCELADA'
+                        ? 'CANCELADA'
+                        : 'REVISADA'} EL{' '}
                     {formatearFecha(solicitudSeleccionada.fechaRevision)}
                   </div>
                 )}
@@ -426,6 +457,15 @@ export const SolicitudesUsuario: React.FC = () => {
                 <button type="button" onClick={handleVisualizarPDF} style={btnVerdeStyle}>
                   VER REPORTE EN PDF
                 </button>
+                {solicitudSeleccionada.estado === 'PENDIENTE' && (
+                  <button
+                    type="button"
+                    onClick={() => handleCancelarSolicitud(solicitudSeleccionada)}
+                    style={btnCancelarStyle}
+                  >
+                    CANCELAR SOLICITUD
+                  </button>
+                )}
                 <button type="button" onClick={() => setSolicitudSeleccionada(null)} style={btnCloseModalStyle}>
                   ✕
                 </button>
@@ -646,6 +686,18 @@ const btnCloseModalStyle: React.CSSProperties = {
   fontSize: '14px',
   fontWeight: 'bold',
   cursor: 'pointer',
+};
+
+const btnCancelarStyle: React.CSSProperties = {
+  backgroundColor: 'rgba(220, 38, 38, 0.12)',
+  color: '#f87171',
+  border: '1px solid #dc2626',
+  borderRadius: '5px',
+  padding: '8px 16px',
+  fontSize: '12px',
+  fontWeight: 700,
+  cursor: 'pointer',
+  letterSpacing: '0.04em',
 };
 
 const sectionDividerStyle: React.CSSProperties = {
