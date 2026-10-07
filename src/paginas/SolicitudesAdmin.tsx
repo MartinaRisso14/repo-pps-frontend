@@ -198,6 +198,30 @@ const obtenerArchivoSolicitud = (
 };
 
 // Chrome bloquea abrir URLs data:... en una pestaña nueva, así que se convierten a blob:
+const validarContenidoAdjunto = (blob: Blob, tipo: 'imagen' | 'documento'): Promise<boolean> =>
+  blob.arrayBuffer().then((buffer) => {
+    const bytes = new Uint8Array(buffer);
+    if (tipo === 'documento') {
+      if (bytes.length < 8) return false;
+      if (String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4]) !== '%PDF-') return false;
+      const texto = new TextDecoder('latin1').decode(bytes.subarray(0, Math.min(bytes.length, 2048)));
+      const cola = new TextDecoder('latin1').decode(bytes.subarray(Math.max(0, bytes.length - 2048)));
+      return texto.includes('xref') && cola.includes('%%EOF');
+    }
+    if (blob.type.startsWith('image/png')) {
+      if (bytes.length < 24) return false;
+      const firma =
+        bytes[0] === 137 && bytes[1] === 80 && bytes[2] === 78 && bytes[3] === 71 &&
+        bytes[4] === 13 && bytes[5] === 10 && bytes[6] === 26 && bytes[7] === 10;
+      if (!firma) return false;
+      return String.fromCharCode(bytes[12], bytes[13], bytes[14], bytes[15]) === 'IHDR';
+    }
+    if (bytes.length < 16) return false;
+    if (!(bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255)) return false;
+    const etiqueta = String.fromCharCode(bytes[6], bytes[7], bytes[8], bytes[9]);
+    return etiqueta === 'JFIF' || etiqueta === 'Exif';
+  });
+
 const AdjuntoSolicitud: React.FC<{
   archivo: ArchivoSolicitud;
   etiqueta: string;
@@ -205,6 +229,8 @@ const AdjuntoSolicitud: React.FC<{
 }> = ({ archivo, etiqueta, previsualizar = true }) => {
   const esDataUrl = archivo.url.startsWith('data:');
   const [url, setUrl] = useState<string | null>(esDataUrl ? null : archivo.url);
+  const [esValido, setEsValido] = useState(true);
+  const [falloVista, setFalloVista] = useState(false);
 
   useEffect(() => {
     if (!esDataUrl) return;
@@ -215,25 +241,49 @@ const AdjuntoSolicitud: React.FC<{
       .then((respuesta) => respuesta.blob())
       .then((blob) => {
         if (cancelado) return;
-        objetoUrl = URL.createObjectURL(blob);
-        setUrl(objetoUrl);
+        return validarContenidoAdjunto(blob, archivo.tipo).then((valido) => {
+          if (cancelado) return;
+          if (!valido) {
+            setEsValido(false);
+            return;
+          }
+          objetoUrl = URL.createObjectURL(blob);
+          setUrl(objetoUrl);
+        });
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (!cancelado) setEsValido(false);
+      });
 
     return () => {
       cancelado = true;
       if (objetoUrl) URL.revokeObjectURL(objetoUrl);
     };
-  }, [archivo.url, esDataUrl]);
+  }, [archivo.url, archivo.tipo, esDataUrl]);
 
   const urlVista = archivo.tipo === 'imagen' && esDataUrl ? archivo.url : url;
 
   return (
     <div className="solicitudes-admin-adjunto">
-      {previsualizar && urlVista && archivo.tipo === 'imagen' && (
-        <img className="solicitudes-admin-adjunto-vista" src={urlVista} alt={archivo.nombre} />
+      {!esValido && (
+        <div className="solicitudes-admin-adjunto-nota">
+          Este adjunto no es un archivo válido y no se puede previsualizar.
+        </div>
       )}
-      {previsualizar && url && archivo.tipo === 'documento' && (
+      {falloVista && esValido && (
+        <div className="solicitudes-admin-adjunto-nota">
+          No se pudo previsualizar este adjunto.
+        </div>
+      )}
+      {previsualizar && esValido && !falloVista && urlVista && archivo.tipo === 'imagen' && (
+        <img
+          className="solicitudes-admin-adjunto-vista"
+          src={urlVista}
+          alt={archivo.nombre}
+          onError={() => setFalloVista(true)}
+        />
+      )}
+      {previsualizar && esValido && url && archivo.tipo === 'documento' && (
         <iframe
           className="solicitudes-admin-adjunto-vista solicitudes-admin-adjunto-pdf"
           src={url}
