@@ -1169,7 +1169,6 @@ const handleGuardarFamiliar = () => {
                     maxLength={150}
                     placeholder="Escribí la repartición propuesta"
                   />
-                  <small style={{ color: '#a1a1aa' }}>Escribí la propuesta; solo se guardará si administración aprueba la solicitud.</small>
                 </div>
 
                 <div>
